@@ -20,6 +20,13 @@
       <button class="apple-btn" id="btn-signin">
          Sign in with Apple
       </button>
+      <!-- CloudKit JS injects its own real "Sign in with Apple ID" button into
+           this container after setUpAuth() runs — it must exist in the DOM
+           first. The custom black pill above is only shown in demo mode;
+           this one is shown (and the pill hidden) once a real API token is
+           configured. Do not remove either element. -->
+      <div id="apple-sign-in-button" class="ck-auth-button"></div>
+      <div id="apple-sign-out-button" style="display:none;"></div>
       <p class="signin-foot" id="signin-foot">Access is limited to managers assigned to a venue.</p>
       <div class="demo-banner" id="demo-banner" style="display:none;">Demo Mode — showing sample data, not connected to CloudKit.</div>
     </div>

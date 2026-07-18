@@ -71,7 +71,6 @@ const MockStore = (() => {
     async signIn() {
       return { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com' };
     },
-    async resumeSession() { return null; }, // mock never auto-resumes; always show the sign-in screen
     async venuesForManager(managerId) {
       return venues.filter(v => v.managers.includes(managerId)).map(v => ({ ...v }));
     },
@@ -149,15 +148,8 @@ function recordToClue(r) {
 }
 
 const CloudKitStore = {
-  async signIn() {
-    const identity = await container.whenUserSignsIn();
-    return identityToManager(identity);
-  },
-  async resumeSession() {
-    const identity = await container.setUpAuth();
-    return identity ? identityToManager(identity) : null;
-  },
-
+  // Auth (setUpAuth / whenUserSignsIn) is wired directly in the "Sign in / out"
+  // section below, not here — see the note there for why.
   async venuesForManager(managerId) {
     const response = await publicDB.performQuery({
       recordType: 'Venue',
@@ -919,46 +911,15 @@ function showToast(iconName, message) {
    Sign in / out
 ------------------------------------------------------------------ */
 
-const signInBtn = document.getElementById('btn-signin');
+const signInBtn = document.getElementById('btn-signin');       // demo-mode-only custom button
+const ckAuthButton = document.getElementById('apple-sign-in-button'); // real CloudKit-injected button
 const signInFoot = document.getElementById('signin-foot');
 const demoBanner = document.getElementById('demo-banner');
 
-if (USE_MOCK) {
-  demoBanner.style.display = 'block';
+async function handleSignedIn(identity) {
+  Object.assign(CURRENT_MANAGER, identityToManager(identity));
+  await goToVenues();
 }
-
-function withTimeout(promise, ms, timeoutMessage) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); }
-    );
-  });
-}
-
-signInBtn.addEventListener('click', async () => {
-  signInBtn.disabled = true;
-  const originalHTML = signInBtn.innerHTML;
-  signInBtn.textContent = 'Signing in…';
-  signInFoot.style.color = '';
-  try {
-    const manager = await withTimeout(
-      Store.signIn(),
-      25000,
-      "Sign-in timed out. If a pop-up for Apple's sign-in page didn't appear, your browser likely blocked it — allow pop-ups for this site and try again."
-    );
-    Object.assign(CURRENT_MANAGER, manager);
-    await goToVenues();
-  } catch (err) {
-    console.error('Sign-in failed:', err);
-    signInFoot.textContent = (err && err.message) || 'Sign-in failed. Please try again.';
-    signInFoot.style.color = 'var(--red)';
-  } finally {
-    signInBtn.disabled = false;
-    signInBtn.innerHTML = originalHTML;
-  }
-});
 
 function signOut() {
   state.venueId = null;
@@ -966,26 +927,52 @@ function signOut() {
   CURRENT_MANAGER.userRecordName = null;
   CURRENT_MANAGER.name = '';
   CURRENT_MANAGER.email = '';
-  // Note: this clears the app's local session only. CloudKit JS doesn't expose
-  // a documented programmatic "sign out of Apple ID" call from here — the
-  // underlying browser session/cookie may let the user silently resume next
-  // time. Verify against current CloudKit JS docs if a hard sign-out matters.
+  if (!USE_MOCK) {
+    // Proxy to CloudKit's own (hidden) sign-out button, since CloudKit JS
+    // doesn't expose a plain programmatic "sign out" call — it's meant to be
+    // triggered by clicking the button it injects into #apple-sign-out-button.
+    const realSignOutBtn = document.querySelector('#apple-sign-out-button *');
+    if (realSignOutBtn) realSignOutBtn.click();
+  }
   showView('signin');
 }
 
-// Auto-resume a previous session on load (CloudKit persists auth via cookie
-// when apiTokenAuth.persist is true).
-(async () => {
-  try {
-    const manager = await Store.resumeSession();
-    if (manager) {
+if (USE_MOCK) {
+  demoBanner.style.display = 'block';
+  signInBtn.addEventListener('click', async () => {
+    signInBtn.disabled = true;
+    try {
+      const manager = await Store.signIn();
       Object.assign(CURRENT_MANAGER, manager);
       await goToVenues();
+    } finally {
+      signInBtn.disabled = false;
     }
-  } catch (err) {
+  });
+} else {
+  signInBtn.style.display = 'none';
+  ckAuthButton.classList.add('visible');
+
+  // whenUserSignsIn() is a passive listener: it resolves whenever the user
+  // completes sign-in via the real button CloudKit injects into
+  // #apple-sign-in-button below (setUpAuth() populates it). It is NOT
+  // something to call again per click — attach it once.
+  container.whenUserSignsIn().then(handleSignedIn).catch((err) => {
+    console.error('CloudKit sign-in listener error:', err);
+    signInFoot.textContent = (err && err.message) || 'Sign-in failed. Please try again.';
+    signInFoot.style.color = 'var(--red)';
+  });
+
+  // setUpAuth() must run for CloudKit to actually inject the real button
+  // into the containers above — and it also resolves with the existing
+  // user if a persisted session cookie is still valid, letting us skip
+  // straight past the sign-in screen.
+  container.setUpAuth().then((identity) => {
+    if (identity) handleSignedIn(identity);
+  }).catch((err) => {
     console.warn('Could not resume CloudKit session:', err);
-  }
-})();
+  });
+}
 
 /* ---------------------------------------------------------------
    Utils
