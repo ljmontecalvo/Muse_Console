@@ -927,6 +927,25 @@ const demoBanner = document.getElementById('demo-banner');
 
 async function handleSignedIn(identity) {
   Object.assign(CURRENT_MANAGER, identityToManager(identity));
+  await enterAfterSignIn();
+}
+
+// Managers are only ever assigned to one venue in practice, so skip the
+// venue grid and land straight on that venue's hunts. Still falls back to
+// the grid for the 0-venue ("not assigned yet") and >1-venue edge cases —
+// see the "All Venues" account-menu item / venues breadcrumb for the way
+// back if either of those ever comes up.
+async function enterAfterSignIn() {
+  try {
+    const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    if (venues.length === 1) {
+      venuesCache = venues;
+      await goToHunts(venues[0].id);
+      return;
+    }
+  } catch (err) {
+    console.warn('Could not check venue count for direct routing, falling back to venues list:', err);
+  }
   await goToVenues();
 }
 
@@ -954,7 +973,7 @@ if (USE_MOCK) {
     try {
       const manager = await Store.signIn();
       Object.assign(CURRENT_MANAGER, manager);
-      await goToVenues();
+      await enterAfterSignIn();
     } finally {
       signInBtn.disabled = false;
     }
