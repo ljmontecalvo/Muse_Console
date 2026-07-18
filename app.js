@@ -959,19 +959,28 @@ if (USE_MOCK) {
   // something to call again per click — attach it once.
   container.whenUserSignsIn().then(handleSignedIn).catch((err) => {
     console.error('CloudKit sign-in listener error:', err);
-    signInFoot.textContent = (err && err.message) || 'Sign-in failed. Please try again.';
-    signInFoot.style.color = 'var(--red)';
+    showAuthError(err);
   });
 
   // setUpAuth() must run for CloudKit to actually inject the real button
   // into the containers above — and it also resolves with the existing
   // user if a persisted session cookie is still valid, letting us skip
-  // straight past the sign-in screen.
+  // straight past the sign-in screen. If the token/environment/origin is
+  // wrong, this REJECTS (it does not just resolve null) and no button
+  // ever gets injected — that's the "no button shows up at all" failure
+  // mode, so surface it instead of only logging it.
   container.setUpAuth().then((identity) => {
     if (identity) handleSignedIn(identity);
   }).catch((err) => {
-    console.warn('Could not resume CloudKit session:', err);
+    console.error('CloudKit setUpAuth failed — no sign-in button will appear:', err);
+    showAuthError(err);
   });
+}
+
+function showAuthError(err) {
+  const reason = (err && (err.reason || err.message)) || 'Could not connect to CloudKit.';
+  signInFoot.textContent = reason;
+  signInFoot.style.color = 'var(--red)';
 }
 
 /* ---------------------------------------------------------------
