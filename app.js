@@ -927,15 +927,31 @@ if (USE_MOCK) {
   demoBanner.style.display = 'block';
 }
 
+function withTimeout(promise, ms, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 signInBtn.addEventListener('click', async () => {
   signInBtn.disabled = true;
   const originalHTML = signInBtn.innerHTML;
   signInBtn.textContent = 'Signing in…';
+  signInFoot.style.color = '';
   try {
-    const manager = await Store.signIn();
+    const manager = await withTimeout(
+      Store.signIn(),
+      25000,
+      "Sign-in timed out. If a pop-up for Apple's sign-in page didn't appear, your browser likely blocked it — allow pop-ups for this site and try again."
+    );
     Object.assign(CURRENT_MANAGER, manager);
     await goToVenues();
   } catch (err) {
+    console.error('Sign-in failed:', err);
     signInFoot.textContent = (err && err.message) || 'Sign-in failed. Please try again.';
     signInFoot.style.color = 'var(--red)';
   } finally {
