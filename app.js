@@ -107,7 +107,16 @@ const MockStore = (() => {
    CloudKit data store (live mode)
 ------------------------------------------------------------------ */
 
-function ckRef(recordName) {
+// Two different reference shapes: query filters want a bare { recordName }
+// (an extra `action` key here can keep the filter from matching anything —
+// this was silently returning zero rows for `venueReference == %@` queries
+// rather than throwing, which is what made "no hunts" look like an empty
+// venue instead of a broken filter). Saved record fields need `action` set
+// (CloudKit requires it on any reference field being written).
+function ckRefQuery(recordName) {
+  return { recordName };
+}
+function ckRefSave(recordName) {
   return { recordName, action: 'NONE' };
 }
 
@@ -168,7 +177,7 @@ const CloudKitStore = {
   async huntsForVenue(venueId) {
     const response = await publicDB.performQuery({
       recordType: 'Hunt',
-      filterBy: [{ fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: ckRef(venueId) } }],
+      filterBy: [{ fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(venueId) } }],
     });
     assertNoErrors(response);
     return response.records.map(recordToHunt);
@@ -183,7 +192,7 @@ const CloudKitStore = {
   async cluesForHunt(huntId) {
     const response = await publicDB.performQuery({
       recordType: 'Clue',
-      filterBy: [{ fieldName: 'huntReference', comparator: 'EQUALS', fieldValue: { value: ckRef(huntId) } }],
+      filterBy: [{ fieldName: 'huntReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(huntId) } }],
       sortBy: [{ fieldName: 'order', ascending: true }],
     });
     assertNoErrors(response);
@@ -193,7 +202,7 @@ const CloudKitStore = {
   async saveHunt(huntId, venueId, data, clueList, originalClueIds) {
     const huntRecord = huntId
       ? { recordName: huntId, recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description } } }
-      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, venueReference: { value: ckRef(venueId) } } };
+      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, venueReference: { value: ckRefSave(venueId) } } };
 
     const huntResp = await publicDB.saveRecords([huntRecord]);
     assertNoErrors(huntResp);
@@ -211,7 +220,7 @@ const CloudKitStore = {
           body: { value: c.body },
           nfcTagID: { value: c.nfcTagID },
           order: { value: i },
-          huntReference: { value: ckRef(finalHuntId) },
+          huntReference: { value: ckRefSave(finalHuntId) },
         },
       };
       if (!isNew) record.recordName = c.id;
