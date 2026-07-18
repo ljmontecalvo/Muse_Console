@@ -315,11 +315,20 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .ck-auth-button {
   display: none;
   width: 100%;
-  min-height: 44px;
+  min-height: 52px;
   align-items: center;
   justify-content: center;
+  /* CloudKit renders its own "Sign in with Apple ID" button in here (likely
+     an iframe) — we can't restyle its internals (font, exact padding,
+     corner radius) from this page, but clipping + rounding the container
+     at least keeps its corners visually consistent with the rest of the
+     card. Give it a touch more height than the button itself needs so its
+     text doesn't render cramped against the container edge. */
+  overflow: hidden;
+  border-radius: 14px;
 }
 .ck-auth-button.visible { display: flex; }
+.ck-auth-button iframe { display: block; }
 
 .demo-banner {
   margin-top: 14px;

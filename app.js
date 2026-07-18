@@ -931,6 +931,7 @@ function signOut() {
     // Proxy to CloudKit's own (hidden) sign-out button, since CloudKit JS
     // doesn't expose a plain programmatic "sign out" call — it's meant to be
     // triggered by clicking the button it injects into #apple-sign-out-button.
+    // This is what makes watchSignOut() (below) resolve and re-arm sign-in.
     const realSignOutBtn = document.querySelector('#apple-sign-out-button *');
     if (realSignOutBtn) realSignOutBtn.click();
   }
@@ -953,24 +954,46 @@ if (USE_MOCK) {
   signInBtn.style.display = 'none';
   ckAuthButton.classList.add('visible');
 
-  // whenUserSignsIn() is a passive listener: it resolves whenever the user
-  // completes sign-in via the real button CloudKit injects into
-  // #apple-sign-in-button below (setUpAuth() populates it). It is NOT
-  // something to call again per click — attach it once.
-  container.whenUserSignsIn().then(handleSignedIn).catch((err) => {
-    console.error('CloudKit sign-in listener error:', err);
-    showAuthError(err);
-  });
+  // whenUserSignsIn()/whenUserSignsOut() are one-shot promises — each
+  // resolves exactly once, then is done. To support signing in, out, and
+  // back in again within one page load, re-subscribe after each event
+  // instead of attaching a single .then() at startup.
+  function watchSignIn() {
+    container.whenUserSignsIn().then((identity) => {
+      handleSignedIn(identity);
+      watchSignOut();
+    }).catch((err) => {
+      console.error('CloudKit sign-in listener error:', err);
+      showAuthError(err);
+    });
+  }
+  function watchSignOut() {
+    container.whenUserSignsOut().then(() => {
+      watchSignIn();
+    }).catch((err) => {
+      console.warn('CloudKit sign-out listener error:', err);
+      watchSignIn(); // still re-arm sign-in even if this listener itself errored
+    });
+  }
 
-  // setUpAuth() must run for CloudKit to actually inject the real button
-  // into the containers above — and it also resolves with the existing
-  // user if a persisted session cookie is still valid, letting us skip
-  // straight past the sign-in screen. If the token/environment/origin is
-  // wrong, this REJECTS (it does not just resolve null) and no button
-  // ever gets injected — that's the "no button shows up at all" failure
-  // mode, so surface it instead of only logging it.
+  // setUpAuth() must run first — it's what actually injects the real button
+  // into the containers above, and it also resolves with the existing user
+  // if a persisted session cookie is still valid (auto-resume). Only start
+  // ONE watch chain based on its result (signed in -> watch for sign-out;
+  // not signed in -> watch for sign-in) so we never end up with two
+  // competing whenUserSignsIn()/whenUserSignsOut() subscriptions racing
+  // each other, which is what happens if you start watchSignIn() up front
+  // and then separately react to setUpAuth resolving with an identity too.
+  // If the token/environment/origin is wrong, this REJECTS (it does not
+  // just resolve null) and no button ever gets injected — that's the
+  // "no button shows up at all" failure mode, so surface it visibly.
   container.setUpAuth().then((identity) => {
-    if (identity) handleSignedIn(identity);
+    if (identity) {
+      handleSignedIn(identity);
+      watchSignOut();
+    } else {
+      watchSignIn();
+    }
   }).catch((err) => {
     console.error('CloudKit setUpAuth failed — no sign-in button will appear:', err);
     showAuthError(err);
