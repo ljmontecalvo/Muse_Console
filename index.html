@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Muse Console</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="backdrop"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+
+<div id="app">
+
+  <!-- ============ SIGN IN ============ -->
+  <section id="view-signin" class="view signin-view active">
+    <div class="signin-card glass">
+      <div class="signin-mark">M</div>
+      <h1 class="signin-title">Muse Console</h1>
+      <p class="signin-sub">Sign in to manage hunts and clues for the museums you run.</p>
+      <button class="apple-btn" id="btn-signin">
+         Sign in with Apple
+      </button>
+      <p class="signin-foot" id="signin-foot">Access is limited to managers assigned to a venue.</p>
+      <div class="demo-banner" id="demo-banner" style="display:none;">Demo Mode — showing sample data, not connected to CloudKit.</div>
+    </div>
+  </section>
+
+  <!-- ============ VENUES ============ -->
+  <section id="view-venues" class="view">
+    <header class="topbar glass" id="topbar-venues"></header>
+    <div class="content">
+      <div class="section-head">
+        <h1 class="section-title">Your Venues</h1>
+        <div class="section-actions">
+          <div class="search-box glass" id="venue-search-box"></div>
+        </div>
+      </div>
+      <div id="venues-grid" class="grid"></div>
+    </div>
+  </section>
+
+  <!-- ============ HUNTS (for a venue) ============ -->
+  <section id="view-hunts" class="view">
+    <header class="topbar glass" id="topbar-hunts"></header>
+    <div class="content">
+      <div class="section-head">
+        <h1 class="section-title" id="hunts-title">Hunts</h1>
+        <div class="section-actions">
+          <div class="search-box glass" id="hunt-search-box"></div>
+          <button class="btn btn-prominent" id="btn-new-hunt"></button>
+        </div>
+      </div>
+      <div id="hunts-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ HUNT EDITOR ============ -->
+  <section id="view-editor" class="view">
+    <header class="topbar glass" id="topbar-editor"></header>
+    <div class="content">
+      <div class="section-head">
+        <h1 class="section-title" id="editor-title">Edit Hunt</h1>
+      </div>
+
+      <div class="editor-grid">
+        <div class="editor-col">
+
+          <div class="panel glass">
+            <p class="panel-title">Hunt Details</p>
+            <div class="field">
+              <label class="label" for="input-hunt-title">Title</label>
+              <input type="text" id="input-hunt-title" placeholder="e.g. Dinosaur Trail" />
+            </div>
+            <div class="field">
+              <label class="label" for="input-hunt-desc">Description</label>
+              <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
+            </div>
+          </div>
+
+          <div class="panel glass">
+            <p class="panel-title">
+              <span>Clues</span>
+              <span class="badge" id="clue-count-badge">0</span>
+            </p>
+            <div class="clue-list" id="clue-list"></div>
+            <button class="btn add-clue-btn" id="btn-add-clue" style="margin-top:10px;">
+              ${'' /* filled by JS */}
+            </button>
+          </div>
+
+          <div class="editor-footer glass">
+            <button class="btn btn-destructive" id="btn-delete-hunt"></button>
+            <div style="flex:1"></div>
+            <button class="btn btn-glass" id="btn-cancel-hunt"></button>
+            <button class="btn btn-prominent" id="btn-save-hunt"></button>
+          </div>
+
+        </div>
+
+        <div class="preview-col">
+          <div class="phone-frame glass-strong">
+            <div class="phone-notch"></div>
+            <div class="phone-title" id="pv-venue-name">Venue</div>
+            <div class="pv-progress">
+              <div class="pv-progress-label" id="pv-progress-label">Clue 1 of 1</div>
+              <div class="pv-bars" id="pv-bars"></div>
+            </div>
+            <div class="pv-card glass" id="pv-card">
+              <div class="pv-card-head">
+                <span id="pv-hunt-title">Hunt Title</span>
+                <span>💡</span>
+              </div>
+              <div class="pv-card-body placeholder" id="pv-card-body">Select or add a clue to preview it here.</div>
+            </div>
+            <div class="pv-footer-btn">Scan Exhibit Tag</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ============ Glass alert overlay (confirm / feedback) ============ -->
+<div class="overlay" id="overlay">
+  <div class="overlay-scrim" id="overlay-scrim"></div>
+  <div class="alert-card glass-strong" id="alert-card"></div>
+</div>
+
+<!-- ============ Toast ============ -->
+<div class="toast glass-strong" id="toast"></div>
+
+<script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
+<script src="config.js"></script>
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
