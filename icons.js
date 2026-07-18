@@ -20,6 +20,10 @@ const ICONS = {
   building: '<path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M4 21h16"/><path d="M8 8h.01M8 12h.01M8 16h.01M11 8h.01M11 12h.01M11 16h.01"/>',
   wand: '<path d="M15 4V2M15 10V8M11 6H9M21 6h-2M18.5 3.5l-1.4 1.4M18.5 8.5l-1.4-1.4"/><path d="m3 21 9-9"/><path d="m14 12 1.5-1.5"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 6.5 8 6.5 8-6.5"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  boxSeam: '<path d="m3.5 8 8.5-4 8.5 4-8.5 4-8.5-4Z"/><path d="M3.5 8v8l8.5 4 8.5-4V8"/><path d="M12 12v8"/>',
 };
 
 function icon(name, cls = '') {

@@ -57,12 +57,12 @@ const MockStore = (() => {
     { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.' },
   ];
   let clues = [
-    { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'REX-ENTRY-01' },
-    { id: 'clue_2', huntId: 'hunt_1', order: 1, title: 'Frozen in Time', body: 'Search for the creature preserved mid-stride in solid amber.', nfcTagID: 'AMBER-04' },
-    { id: 'clue_3', huntId: 'hunt_1', order: 2, title: 'Ancient Skies', body: 'Look up — what once soared above the treetops now hangs above you.', nfcTagID: 'PTERO-12' },
-    { id: 'clue_4', huntId: 'hunt_2', order: 0, title: 'First Light', body: 'Find the crystal that splits sunlight into a rainbow on the wall.', nfcTagID: 'QUARTZ-A1' },
-    { id: 'clue_5', huntId: 'hunt_2', order: 1, title: 'Deep Earth', body: 'Locate the darkest stone in the room, pulled from the deepest mine.', nfcTagID: 'OBSID-B2' },
-    { id: 'clue_6', huntId: 'hunt_3', order: 0, title: 'Sparks Fly', body: 'Find the machine that first turned electricity into motion.', nfcTagID: 'MOTOR-01' },
+    { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'K7$Q2M9!XB4@RT8&WZ3P', tagStatus: 'installed' },
+    { id: 'clue_2', huntId: 'hunt_1', order: 1, title: 'Frozen in Time', body: 'Search for the creature preserved mid-stride in solid amber.', nfcTagID: 'H2#N8V5*JD1%LF6+YC9K', tagStatus: 'requested' },
+    { id: 'clue_3', huntId: 'hunt_1', order: 2, title: 'Ancient Skies', body: 'Look up — what once soared above the treetops now hangs above you.', nfcTagID: 'T4@W9X2!B7$M3&Q8*NR5', tagStatus: 'pending' },
+    { id: 'clue_4', huntId: 'hunt_2', order: 0, title: 'First Light', body: 'Find the crystal that splits sunlight into a rainbow on the wall.', nfcTagID: 'Y3%K6D9#F2!H8@V5*ZQ1', tagStatus: 'installed' },
+    { id: 'clue_5', huntId: 'hunt_2', order: 1, title: 'Deep Earth', body: 'Locate the darkest stone in the room, pulled from the deepest mine.', nfcTagID: 'M9&R4T7$C2!K5@N8*XW3', tagStatus: 'pending' },
+    { id: 'clue_6', huntId: 'hunt_3', order: 0, title: 'Sparks Fly', body: 'Find the machine that first turned electricity into motion.', nfcTagID: 'D6#Q9M2!W5@H8&Y3*BT4', tagStatus: 'requested' },
   ];
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
@@ -92,6 +92,7 @@ const MockStore = (() => {
         clues.push({
           id: c.id && !c.id.startsWith('draft_') ? c.id : nextId('clue'),
           huntId, order: i, title: c.title, body: c.body, nfcTagID: c.nfcTagID,
+          tagStatus: c.tagStatus || 'pending',
         });
       });
       return huntId;
@@ -152,6 +153,9 @@ function recordToClue(r) {
     title: r.fields.title && r.fields.title.value,
     body: r.fields.body && r.fields.body.value,
     nfcTagID: r.fields.nfcTagID && r.fields.nfcTagID.value,
+    // Clue records saved before the tagStatus field existed won't have it —
+    // treat those as "pending" rather than crashing or showing a blank status.
+    tagStatus: (r.fields.tagStatus && r.fields.tagStatus.value) || 'pending',
     huntId: r.fields.huntReference && r.fields.huntReference.value && r.fields.huntReference.value.recordName,
   };
 }
@@ -219,6 +223,7 @@ const CloudKitStore = {
           title: { value: c.title },
           body: { value: c.body },
           nfcTagID: { value: c.nfcTagID },
+          tagStatus: { value: c.tagStatus || 'pending' },
           order: { value: i },
           huntReference: { value: ckRefSave(finalHuntId) },
         },
@@ -469,6 +474,7 @@ function emptyState(iconName, title, desc) {
 
 let huntsCache = [];
 let huntClueCounts = {};
+let huntInstalledTagCounts = {};
 
 async function goToHunts(venueId) {
   state.venueId = venueId;
@@ -503,8 +509,9 @@ async function renderHuntsList() {
   try {
     all = await Store.huntsForVenue(state.venueId);
     huntsCache = all;
-    const counts = await Promise.all(all.map(h => Store.cluesForHunt(h.id).then(c => c.length).catch(() => 0)));
-    huntClueCounts = Object.fromEntries(all.map((h, i) => [h.id, counts[i]]));
+    const clueLists = await Promise.all(all.map(h => Store.cluesForHunt(h.id).catch(() => [])));
+    huntClueCounts = Object.fromEntries(all.map((h, i) => [h.id, clueLists[i].length]));
+    huntInstalledTagCounts = Object.fromEntries(all.map((h, i) => [h.id, clueLists[i].filter(c => c.tagStatus === 'installed').length]));
   } catch (err) {
     listEl.innerHTML = errorHTML('Could not load hunts', err);
     listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsList);
@@ -523,7 +530,11 @@ async function renderHuntsList() {
     return;
   }
 
-  listEl.innerHTML = filtered.map(h => `
+  listEl.innerHTML = filtered.map(h => {
+    const clueCount = huntClueCounts[h.id] ?? 0;
+    const installedCount = huntInstalledTagCounts[h.id] ?? 0;
+    const tagsReady = clueCount > 0 && installedCount === clueCount;
+    return `
     <div class="hunt-row glass" data-hunt="${h.id}">
       <div class="hr-icon">${icon('map')}</div>
       <div class="hr-body">
@@ -531,11 +542,13 @@ async function renderHuntsList() {
         <div class="hr-sub">${escapeHTML(h.description)}</div>
       </div>
       <div class="hr-meta">
-        <span class="hr-count">${huntClueCounts[h.id] ?? 0} clue${huntClueCounts[h.id] === 1 ? '' : 's'}</span>
+        <span class="hr-count">${clueCount} clue${clueCount === 1 ? '' : 's'}</span>
+        ${clueCount > 0 ? `<span class="status-badge ${tagsReady ? 'status-installed' : 'status-pending'}">${icon(tagsReady ? 'checkCircle' : 'boxSeam')}${installedCount}/${clueCount} tags installed</span>` : ''}
         ${icon('chevronRight')}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   listEl.querySelectorAll('[data-hunt]').forEach(row => {
     row.addEventListener('click', () => openEditor(row.dataset.hunt, state.venueId));
@@ -618,7 +631,7 @@ function syncCrumbTitle() {
 }
 
 function addClue() {
-  state.draft.clues.push({ id: draftClueId(), title: '', body: '', nfcTagID: '' });
+  state.draft.clues.push({ id: draftClueId(), title: '', body: '', nfcTagID: generateTagID(), tagStatus: 'pending' });
   state.expandedClueId = state.draft.clues[state.draft.clues.length - 1].id;
   renderClueList();
   renderPreview();
@@ -654,7 +667,6 @@ function renderClueList() {
 
     const titleInput = row.querySelector('.clue-title-input');
     const bodyInput = row.querySelector('.clue-body-input');
-    const tagInput = row.querySelector('.clue-tag-input');
     if (titleInput) {
       titleInput.addEventListener('input', (e) => {
         c.title = e.target.value;
@@ -666,16 +678,61 @@ function renderClueList() {
         row.querySelector('.clue-summary-body-text').textContent = c.body || 'No clue text yet';
         renderPreview();
       });
-      tagInput.addEventListener('input', (e) => {
-        c.nfcTagID = e.target.value;
-        const chip = row.querySelector('.clue-tag-chip');
-        if (chip) chip.textContent = c.nfcTagID || 'NO TAG';
+
+      row.querySelector('.btn-copy-tag').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(c.nfcTagID);
+          showToast('checkCircle', 'Tag ID Copied');
+        } catch {
+          showToast('copy', c.nfcTagID);
+        }
       });
-      row.querySelector('.btn-generate-tag').addEventListener('click', () => {
-        c.nfcTagID = generateTagID();
-        tagInput.value = c.nfcTagID;
-        row.querySelector('.clue-tag-chip').textContent = c.nfcTagID;
+
+      row.querySelector('.btn-generate-tag').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const regenerate = () => {
+          c.nfcTagID = generateTagID();
+          c.tagStatus = 'pending';
+          renderClueList();
+          renderPreview();
+        };
+        if (c.tagStatus === 'pending') {
+          regenerate();
+        } else {
+          showAlert({
+            icon: 'triangleExclaim', tone: 'danger', title: 'Generate a New Tag?',
+            message: "This clue's tag was already requested or installed. Generating a new code means that physical tag will no longer work — you'll need to request a fresh one.",
+            actions: [
+              { label: 'Cancel', style: 'btn-glass', onClick: closeOverlay },
+              { label: 'Generate New', style: 'btn-prominent danger-fill', onClick: () => { closeOverlay(); regenerate(); } },
+            ],
+          });
+        }
       });
+
+      const requestBtn = row.querySelector('.btn-request-tag');
+      if (requestBtn) requestBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        requestTagForClue(c);
+      });
+
+      const installedBtn = row.querySelector('.btn-mark-installed');
+      if (installedBtn) installedBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        c.tagStatus = 'installed';
+        renderClueList();
+        renderPreview();
+      });
+
+      const notInstalledBtn = row.querySelector('.btn-mark-requested');
+      if (notInstalledBtn) notInstalledBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        c.tagStatus = 'requested';
+        renderClueList();
+        renderPreview();
+      });
+
       row.querySelector('.btn-delete-clue').addEventListener('click', (e) => {
         e.stopPropagation();
         confirmDeleteClue(c.id);
@@ -704,8 +761,20 @@ function renderClueList() {
   });
 }
 
+const TAG_STATUS_META = {
+  pending: { label: 'Needs Tag', icon: 'clock', cls: 'status-pending' },
+  requested: { label: 'Requested', icon: 'mail', cls: 'status-requested' },
+  installed: { label: 'Installed', icon: 'checkCircle', cls: 'status-installed' },
+};
+
+function tagStatusBadgeHTML(status) {
+  const meta = TAG_STATUS_META[status] || TAG_STATUS_META.pending;
+  return `<span class="status-badge ${meta.cls}">${icon(meta.icon)}${meta.label}</span>`;
+}
+
 function clueRowHTML(c, index) {
   const expanded = state.expandedClueId === c.id;
+  const status = c.tagStatus || 'pending';
   return `
     <div class="clue-row ${expanded ? 'expanded' : ''}" data-clue-row="${c.id}">
       <div class="clue-summary">
@@ -715,7 +784,7 @@ function clueRowHTML(c, index) {
           <div class="clue-summary-title">${escapeHTML(c.title) || 'Untitled Clue'}</div>
           <div class="clue-summary-body-text">${escapeHTML(c.body) || 'No clue text yet'}</div>
         </div>
-        <span class="clue-tag-chip">${escapeHTML(c.nfcTagID) || 'NO TAG'}</span>
+        ${tagStatusBadgeHTML(status)}
         <span class="clue-chevron">${icon('chevronRight')}</span>
       </div>
       <div class="clue-detail">
@@ -728,10 +797,20 @@ function clueRowHTML(c, index) {
           <textarea class="clue-body-input" rows="3" placeholder="What should visitors look for?">${escapeHTML(c.body)}</textarea>
         </div>
         <div class="field">
-          <label class="label">NFC Tag ID</label>
-          <div class="tag-generate-row">
-            <input type="text" class="clue-tag-input mono" value="${escapeAttr(c.nfcTagID)}" placeholder="e.g. REX-ENTRY-01" />
-            <button class="btn btn-glass btn-generate-tag" type="button">${icon('wand')} Generate</button>
+          <label class="label">NFC Tag</label>
+          <div class="tag-display-row">
+            <code class="clue-tag-code">${escapeHTML(c.nfcTagID)}</code>
+            <button class="btn btn-icon btn-copy-tag" type="button" title="Copy tag ID">${icon('copy')}</button>
+          </div>
+          <p class="tag-hint">Generated automatically — can't be typed in. A physical tag has to be manufactured with this exact code before it'll work at the exhibit.</p>
+          <div class="tag-status-row">
+            ${tagStatusBadgeHTML(status)}
+            <div class="tag-status-actions">
+              <button class="btn btn-glass btn-generate-tag" type="button">${icon('wand')} Regenerate</button>
+              ${status === 'pending' ? `<button class="btn btn-prominent btn-request-tag" type="button">${icon('mail')} Request Tag</button>` : ''}
+              ${status === 'requested' ? `<button class="btn btn-glass btn-mark-installed" type="button">${icon('boxSeam')} Mark as Installed</button>` : ''}
+              ${status === 'installed' ? `<button class="btn btn-plain btn-mark-requested" type="button">Mark as Not Installed</button>` : ''}
+            </div>
           </div>
         </div>
         <div class="clue-detail-actions">
@@ -754,10 +833,56 @@ function reorderClues(draggedId, targetId) {
   renderPreview();
 }
 
+// Always a random 20-character mix of capital letters, digits, and symbols —
+// managers can't type or edit this, it's only ever machine-generated. This
+// is the exact text that gets written to a physical NFC tag once one is
+// manufactured, so it deliberately excludes visually-ambiguous characters
+// (I/O and 0/1) even though it's meant to be copy-pasted, not hand-typed.
+const TAG_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const TAG_DIGITS = '23456789';
+const TAG_SYMBOLS = '!@#$%^&*+=?';
+const TAG_LENGTH = 20;
+
 function generateTagID() {
-  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const rand = (n, src) => Array.from({ length: n }, () => src[Math.floor(Math.random() * src.length)]).join('');
-  return `${rand(4, letters)}-${rand(4, '0123456789')}`;
+  const all = TAG_LETTERS + TAG_DIGITS + TAG_SYMBOLS;
+  const pick = (src) => src[Math.floor(Math.random() * src.length)];
+
+  // Guarantee at least one letter, one digit, and one symbol, then fill the
+  // rest randomly from the combined pool and shuffle so the guaranteed
+  // characters aren't always sitting in the first three positions.
+  const chars = [pick(TAG_LETTERS), pick(TAG_DIGITS), pick(TAG_SYMBOLS)];
+  while (chars.length < TAG_LENGTH) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
+function requestTagForClue(clue) {
+  const venue = venuesCache.find(v => v.id === state.venueId);
+  const venueName = (venue && venue.name) || 'Venue';
+  const huntTitle = state.draft.title.trim() || 'Untitled Hunt';
+  const clueTitle = clue.title.trim() || 'Untitled Clue';
+
+  const subject = `NFC Tag Request — ${venueName} / ${huntTitle} / ${clueTitle}`;
+  const body = [
+    'Please manufacture a physical NFC tag encoded with the exact ID below and deliver it for placement at this exhibit.',
+    '',
+    `Venue: ${venueName}`,
+    `Hunt: ${huntTitle}`,
+    `Clue: ${clueTitle}`,
+    `Tag ID (must match exactly — matching is case-insensitive): ${clue.nfcTagID}`,
+  ].join('\n');
+
+  // mailto: hands off to the OS mail client without navigating away from
+  // the page — no backend/email service needed for this.
+  window.location.href = `mailto:${encodeURIComponent(TAG_REQUEST_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  clue.tagStatus = 'requested';
+  renderClueList();
+  renderPreview();
+  showToast('mail', 'Tag Requested');
 }
 
 /* ---------------------------------------------------------------

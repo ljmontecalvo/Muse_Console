@@ -15,6 +15,10 @@
         every origin this console will be served from, and when it
         asks for the auth callback method, pick "Post Message" (see
         chat for why).
+     4. Add a `tagStatus` field (String) to the Clue record type, also
+        in Development. No Queryable index needed — it's never filtered
+        on, just read/written. Existing Clue records without this field
+        are treated as "pending" (see recordToClue in app.js).
 ------------------------------------------------------------------ */
 
 const CLOUDKIT_CONFIG = {
@@ -22,3 +26,7 @@ const CLOUDKIT_CONFIG = {
   apiToken: '02c63961ddac3b3f0eaa070047dcc7794bec29a9cf4a36268dcc8e5aa063336d', // <-- paste your Development Client API Token here
   environment: 'development',
 };
+
+// Where "Request Tag" emails go — you, since physical NFC tags have to be
+// manufactured and shipped to a venue before a clue's tag can go live.
+const TAG_REQUEST_EMAIL = 'landonjmontecalvo@gmail.com';
