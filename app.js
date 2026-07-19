@@ -840,9 +840,11 @@ function userRowHTML(u, venues) {
               <button class="chip-remove" data-remove-venue="${v.id}" title="Remove as manager">${icon('close')}</button>
             </span>
           `).join('')
-          : `<span class="user-venue-chips-empty">Not a manager of any venue</span>`}
+          : u.isAdmin
+            ? `<span class="user-venue-chips-empty">Has access to all venues as an Administrator</span>`
+            : `<span class="user-venue-chips-empty">Not a manager of any venue</span>`}
       </div>
-      ${unmanagedVenues.length ? `
+      ${!u.isAdmin && unmanagedVenues.length ? `
         <div class="user-assign-row">
           <select class="venue-picker">
             <option value="">Add as manager of…</option>
