@@ -353,10 +353,6 @@ function renderTopbar(containerId, crumbs) {
             <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
           </div>
           <div class="dropdown-divider"></div>
-          <div class="manager-id-row">
-            <span class="mid-label">Manager ID</span>
-            <span class="mid-value" title="${escapeAttr(CURRENT_MANAGER.userRecordName || '')}">${escapeHTML(CURRENT_MANAGER.userRecordName || '')}</span>
-          </div>
           <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
           <div class="dropdown-divider"></div>
           <button class="dropdown-item" id="menu-venues">${icon('building')} All Venues</button>

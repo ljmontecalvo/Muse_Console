@@ -364,16 +364,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .empty-state.is-error .icon { color: var(--orange); }
 .empty-state .es-retry { margin-top: 6px; }
 
-.manager-id-row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 8px 12px; font-size: 11.5px;
-}
-.manager-id-row .mid-label { color: var(--text-tertiary); }
-.manager-id-row .mid-value {
-  font-family: "SF Mono", ui-monospace, Menlo, monospace;
-  color: var(--text-secondary);
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 
 /* ---------------- Section heading / search ---------------- */
 
