@@ -19,6 +19,31 @@
         in Development. No Queryable index needed — it's never filtered
         on, just read/written. Existing Clue records without this field
         are treated as "pending" (see recordToClue in app.js).
+
+   Admin feature (isMuseAdministrator on the built-in Users type):
+     5. Add a new custom record type `AppUser` with fields `name` (String)
+        and `email` (String). Every sign-in upserts one of these, keyed by
+        using the person's CloudKit userRecordName AS the record's own
+        recordName — this is the "directory" the admin Users page lists,
+        since CloudKit deliberately won't let client code query/list every
+        record of its built-in Users type (privacy), only fetch one by a
+        recordName you already have.
+     6. Security Roles -> AppUser -> grant Authenticated Create + Write
+        (same coarse trust-your-team posture as Hunt/Clue — see chat).
+     7. Security Roles -> Venue -> create a NEW custom role, e.g. "Muse
+        Administrators", grant it Write, and manually add your own user
+        record to it (Copy My Manager ID from the console's account menu
+        once signed in, then add that ID to the role's member list). Do
+        NOT grant Venue write to Authenticated or to Museum Managers —
+        that would let any manager add themselves/anyone to any venue.
+     8. Security Roles -> Users (the built-in type, now that it has your
+        custom isMuseAdministrator field) -> confirm Authenticated has at
+        least Read. If admin-status checks fail after sign-in, this is
+        the first thing to check in CloudKit Dashboard.
+     9. isMuseAdministrator itself is set by you, by hand, by editing a
+        specific person's Users record in CloudKit Dashboard's data
+        browser — the console only ever reads this flag, it has no UI
+        for granting admin status to someone else.
 ------------------------------------------------------------------ */
 
 const CLOUDKIT_CONFIG = {

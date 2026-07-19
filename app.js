@@ -39,7 +39,7 @@ if (!USE_MOCK) {
   publicDB = container.publicCloudDatabase;
 }
 
-const CURRENT_MANAGER = { userRecordName: null, name: '', email: '' };
+const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: false };
 
 /* ---------------------------------------------------------------
    Mock data store (demo mode)
@@ -67,9 +67,45 @@ const MockStore = (() => {
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
 
+  // The signed-in demo identity is the site owner, so it's an administrator
+  // by default — a good way to exercise the admin views in demo mode. Note
+  // venue_3 above is managed by "someone_else", not mock_manager, which is
+  // exactly the case that shows off admin bypassing the normal manager filter.
+  let appUsers = [
+    { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com', isAdmin: true },
+    { userRecordName: 'someone_else', name: 'Jordan Reyes', email: 'jordan.reyes@example.com', isAdmin: false },
+    { userRecordName: 'mock_user_3', name: 'Casey Nguyen', email: 'casey.nguyen@example.com', isAdmin: false },
+  ];
   return {
     async signIn() {
       return { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com' };
+    },
+    async checkIsAdmin(userRecordName) {
+      const u = appUsers.find(x => x.userRecordName === userRecordName);
+      return !!(u && u.isAdmin);
+    },
+    async upsertDirectoryEntry(userRecordName, name, email) {
+      const existing = appUsers.find(x => x.userRecordName === userRecordName);
+      if (existing) {
+        existing.name = name;
+        existing.email = email;
+      } else {
+        appUsers.push({ userRecordName, name, email, isAdmin: false });
+      }
+    },
+    async allUsers() {
+      return appUsers.map(u => ({ ...u }));
+    },
+    async allVenues() {
+      return venues.map(v => ({ ...v }));
+    },
+    async assignManager(venueId, userRecordName) {
+      const v = venues.find(x => x.id === venueId);
+      if (v && !v.managers.includes(userRecordName)) v.managers.push(userRecordName);
+    },
+    async unassignManager(venueId, userRecordName) {
+      const v = venues.find(x => x.id === venueId);
+      if (v) v.managers = v.managers.filter(id => id !== userRecordName);
     },
     async venuesForManager(managerId) {
       return venues.filter(v => v.managers.includes(managerId)).map(v => ({ ...v }));
@@ -134,6 +170,7 @@ function recordToVenue(r) {
     recordChangeTag: r.recordChangeTag,
     name: r.fields.name && r.fields.name.value,
     address: r.fields.address && r.fields.address.value,
+    managers: (r.fields.managers && r.fields.managers.value) || [],
   };
 }
 function recordToHunt(r) {
@@ -163,6 +200,86 @@ function recordToClue(r) {
 const CloudKitStore = {
   // Auth (setUpAuth / whenUserSignsIn) is wired directly in the "Sign in / out"
   // section below, not here — see the note there for why.
+
+  // Fails closed (returns false) on any error, including "field doesn't
+  // exist" or a permissions problem reading the Users type's custom field —
+  // an admin-check that can't be confirmed should never silently grant
+  // access. See config.js item 8 if this always comes back false.
+  async checkIsAdmin(userRecordName) {
+    try {
+      const response = await publicDB.fetchRecords(userRecordName);
+      if (response.hasErrors) return false;
+      const rec = response.records && response.records[0];
+      const val = rec && rec.fields && rec.fields.isMuseAdministrator && rec.fields.isMuseAdministrator.value;
+      return val === 1;
+    } catch (err) {
+      console.warn('checkIsAdmin failed:', err);
+      return false;
+    }
+  },
+
+  // Upserts this person's directory entry. operationType: 'forceUpdate'
+  // creates the record if it doesn't exist yet and updates it (no
+  // recordChangeTag needed) if it does — exactly the upsert semantics
+  // needed here, since we don't know which case we're in without an extra
+  // fetch first.
+  async upsertDirectoryEntry(userRecordName, name, email) {
+    const response = await publicDB.saveRecords([{
+      recordName: userRecordName,
+      recordType: 'AppUser',
+      operationType: 'forceUpdate',
+      fields: { name: { value: name }, email: { value: email } },
+    }]);
+    assertNoErrors(response);
+  },
+
+  async allUsers() {
+    const response = await publicDB.performQuery({ recordType: 'AppUser' });
+    assertNoErrors(response);
+    return response.records.map(r => ({
+      userRecordName: r.recordName,
+      name: r.fields.name && r.fields.name.value,
+      email: r.fields.email && r.fields.email.value,
+    }));
+  },
+
+  // No filterBy — an admin needs every venue regardless of who manages it.
+  // Unverified against a live container like everything else here: if this
+  // errors, CloudKit may require an explicit filter even for "all records
+  // of this type" queries.
+  async allVenues() {
+    const response = await publicDB.performQuery({ recordType: 'Venue' });
+    assertNoErrors(response);
+    return response.records.map(recordToVenue);
+  },
+
+  async assignManager(venueId, userRecordName) {
+    const venue = await this.venue(venueId);
+    if ((venue.managers || []).includes(userRecordName)) return;
+    const updated = [...(venue.managers || []), userRecordName];
+    const response = await publicDB.saveRecords([{
+      recordName: venueId,
+      recordChangeTag: venue.recordChangeTag,
+      operationType: 'update',
+      recordType: 'Venue',
+      fields: { managers: { value: updated } },
+    }]);
+    assertNoErrors(response);
+  },
+
+  async unassignManager(venueId, userRecordName) {
+    const venue = await this.venue(venueId);
+    const updated = (venue.managers || []).filter(id => id !== userRecordName);
+    const response = await publicDB.saveRecords([{
+      recordName: venueId,
+      recordChangeTag: venue.recordChangeTag,
+      operationType: 'update',
+      recordType: 'Venue',
+      fields: { managers: { value: updated } },
+    }]);
+    assertNoErrors(response);
+  },
+
   async venuesForManager(managerId) {
     const response = await publicDB.performQuery({
       recordType: 'Venue',
@@ -286,6 +403,7 @@ const state = {
   expandedClueId: null,
   venueSearch: '',
   huntSearch: '',
+  userSearch: '',
 };
 
 let draftClueSeq = 1;
@@ -345,6 +463,7 @@ function renderTopbar(containerId, crumbs) {
       <div class="account-menu-wrap">
         <button class="account-btn" id="account-btn">
           <span class="account-name">${escapeHTML(CURRENT_MANAGER.name)}</span>
+          ${CURRENT_MANAGER.isAdmin ? adminBadgeHTML() : ''}
           <span class="avatar">${icon('person')}</span>
         </button>
         <div class="account-dropdown glass-strong" id="account-dropdown">
@@ -356,6 +475,7 @@ function renderTopbar(containerId, crumbs) {
           <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
           <div class="dropdown-divider"></div>
           <button class="dropdown-item" id="menu-venues">${icon('building')} All Venues</button>
+          ${CURRENT_MANAGER.isAdmin ? `<button class="dropdown-item" id="menu-users">${icon('person')} Manage Users</button>` : ''}
           <div class="dropdown-divider"></div>
           <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
         </div>
@@ -373,6 +493,8 @@ function renderTopbar(containerId, crumbs) {
     el.querySelector('#account-dropdown').classList.toggle('open');
   });
   el.querySelector('#menu-venues').addEventListener('click', () => { closeAccountMenus(); goToVenues(); });
+  const menuUsers = el.querySelector('#menu-users');
+  if (menuUsers) menuUsers.addEventListener('click', () => { closeAccountMenus(); goToUsers(); });
   el.querySelector('#menu-signout').addEventListener('click', () => { closeAccountMenus(); signOut(); });
   el.querySelector('#menu-copy-id').addEventListener('click', async () => {
     closeAccountMenus();
@@ -412,6 +534,12 @@ async function goToVenues() {
     state.venueSearch = v;
     renderVenuesGrid();
   });
+
+  const titleEl = document.getElementById('venues-title');
+  titleEl.innerHTML = CURRENT_MANAGER.isAdmin
+    ? `All Venues ${adminBadgeHTML()}`
+    : 'Your Venues';
+
   showView('venues');
   await renderVenuesGrid();
 }
@@ -425,7 +553,9 @@ async function renderVenuesGrid() {
 
   let all;
   try {
-    all = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    all = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
     venuesCache = all;
     const counts = await Promise.all(all.map(v => Store.huntsForVenue(v.id).then(h => h.length).catch(() => 0)));
     venueHuntCounts = Object.fromEntries(all.map((v, i) => [v.id, counts[i]]));
@@ -439,11 +569,13 @@ async function renderVenuesGrid() {
 
   if (all.length === 0) {
     grid.innerHTML = '';
-    grid.appendChild(emptyState(
-      'building',
-      'No Venues Assigned',
-      "You aren't listed as a manager for any venue yet. Ask an admin to add your Manager ID to a venue's managers list."
-    ));
+    grid.appendChild(CURRENT_MANAGER.isAdmin
+      ? emptyState('building', 'No Venues Yet', 'No Venue records exist in CloudKit yet.')
+      : emptyState(
+          'building',
+          'No Venues Assigned',
+          "You aren't listed as a manager for any venue yet. Ask an admin to add your Manager ID to a venue's managers list."
+        ));
     return;
   }
   if (filtered.length === 0) {
@@ -477,6 +609,144 @@ function emptyState(iconName, title, desc) {
   div.style.gridColumn = '1/-1';
   div.innerHTML = `${icon(iconName)}<div class="es-title">${title}</div><div class="es-desc">${desc}</div>`;
   return div;
+}
+
+/* ---------------------------------------------------------------
+   Users view (administrators only)
+------------------------------------------------------------------ */
+
+async function goToUsers() {
+  state.venueId = null;
+  state.huntId = null;
+  renderTopbar('topbar-users', [{ label: 'All Users' }]);
+  renderSearchBox('user-search-box', 'Search users', state.userSearch, (v) => {
+    state.userSearch = v;
+    renderUsersList();
+  });
+  showView('users');
+  await renderUsersList();
+}
+
+async function renderUsersList() {
+  const listEl = document.getElementById('users-list');
+  listEl.innerHTML = loadingHTML('Loading users…');
+
+  let users, venues;
+  try {
+    [users, venues] = await Promise.all([Store.allUsers(), Store.allVenues()]);
+    const adminFlags = await Promise.all(users.map(u => Store.checkIsAdmin(u.userRecordName).catch(() => false)));
+    users = users.map((u, i) => ({ ...u, isAdmin: adminFlags[i] }));
+  } catch (err) {
+    listEl.innerHTML = errorHTML('Could not load users', err);
+    listEl.querySelector('#retry-btn').addEventListener('click', renderUsersList);
+    return;
+  }
+
+  const filtered = users.filter(u =>
+    u.name.toLowerCase().includes(state.userSearch.toLowerCase()) ||
+    u.email.toLowerCase().includes(state.userSearch.toLowerCase())
+  );
+
+  if (users.length === 0) {
+    listEl.innerHTML = '';
+    listEl.appendChild(emptyState('person', 'No Users Yet', 'Nobody has signed in to the console yet.'));
+    return;
+  }
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No users match “${escapeHTML(state.userSearch)}”.</div></div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(u => userRowHTML(u, venues)).join('');
+
+  filtered.forEach((u) => {
+    const row = listEl.querySelector(`[data-user="${u.userRecordName}"]`);
+
+    row.querySelectorAll('[data-remove-venue]').forEach((btn) => {
+      btn.addEventListener('click', () => confirmUnassignManager(u, btn.dataset.removeVenue, venues));
+    });
+
+    const addBtn = row.querySelector('.btn-assign-venue');
+    const picker = row.querySelector('.venue-picker');
+    if (addBtn) addBtn.addEventListener('click', async () => {
+      const venueId = picker.value;
+      if (!venueId) return;
+      addBtn.disabled = true;
+      try {
+        await Store.assignManager(venueId, u.userRecordName);
+        showToast('checkCircle', 'Manager Added');
+        await renderUsersList();
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Manager',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+        addBtn.disabled = false;
+      }
+    });
+  });
+}
+
+function userRowHTML(u, venues) {
+  const managedVenues = venues.filter(v => (v.managers || []).includes(u.userRecordName));
+  const unmanagedVenues = venues.filter(v => !(v.managers || []).includes(u.userRecordName));
+
+  return `
+    <div class="user-card glass" data-user="${u.userRecordName}">
+      <div class="user-card-head">
+        <div class="hr-icon">${icon('person')}</div>
+        <div class="hr-body">
+          <div class="hr-title">${escapeHTML(u.name)} ${u.isAdmin ? adminBadgeHTML() : ''}</div>
+          <div class="hr-sub">${escapeHTML(u.email)}</div>
+        </div>
+      </div>
+      <div class="user-venue-chips">
+        ${managedVenues.length
+          ? managedVenues.map(v => `
+            <span class="venue-chip">
+              ${escapeHTML(v.name)}
+              <button class="chip-remove" data-remove-venue="${v.id}" title="Remove as manager">${icon('close')}</button>
+            </span>
+          `).join('')
+          : `<span class="user-venue-chips-empty">Not a manager of any venue</span>`}
+      </div>
+      ${unmanagedVenues.length ? `
+        <div class="user-assign-row">
+          <select class="venue-picker">
+            <option value="">Add as manager of…</option>
+            ${unmanagedVenues.map(v => `<option value="${v.id}">${escapeHTML(v.name)}</option>`).join('')}
+          </select>
+          <button class="btn btn-glass btn-assign-venue" type="button">${icon('plus')} Add</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function confirmUnassignManager(user, venueId, venues) {
+  const venue = venues.find(v => v.id === venueId);
+  showAlert({
+    icon: 'triangleExclaim', tone: 'danger', title: 'Remove This Manager?',
+    message: `${user.name} will no longer be able to manage “${venue ? venue.name : 'this venue'}.”`,
+    actions: [
+      { label: 'Cancel', style: 'btn-glass', onClick: closeOverlay },
+      { label: 'Remove', style: 'btn-prominent danger-fill', onClick: async () => {
+        closeOverlay();
+        try {
+          await Store.unassignManager(venueId, user.userRecordName);
+          showToast('checkCircle', 'Manager Removed');
+          await renderUsersList();
+        } catch (err) {
+          showAlert({
+            icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Remove Manager',
+            message: err.message || 'Something went wrong talking to CloudKit.',
+            actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+          });
+        }
+      } },
+    ],
+  });
 }
 
 /* ---------------------------------------------------------------
@@ -785,6 +1055,10 @@ function tagStatusBadgeHTML(status) {
   return `<span class="status-badge ${meta.cls}">${icon(meta.icon)}${meta.label}</span>`;
 }
 
+function adminBadgeHTML() {
+  return `<span class="status-badge status-admin">${icon('gear')}Administrator</span>`;
+}
+
 function clueRowHTML(c, index) {
   const expanded = state.expandedClueId === c.id;
   const status = c.tagStatus || 'pending';
@@ -1066,6 +1340,27 @@ const demoBanner = document.getElementById('demo-banner');
 
 async function handleSignedIn(identity) {
   Object.assign(CURRENT_MANAGER, identityToManager(identity));
+  await finishSignIn();
+}
+
+// Runs after CURRENT_MANAGER's identity (userRecordName/name/email) is set,
+// regardless of mock or real auth. Checks admin status and upserts this
+// person's directory entry (see config.js items 5-9) before routing —
+// both are best-effort: a failure here shouldn't block sign-in itself,
+// it just means they're treated as a non-admin and/or don't show up in
+// the admin Users list yet.
+async function finishSignIn() {
+  try {
+    CURRENT_MANAGER.isAdmin = await Store.checkIsAdmin(CURRENT_MANAGER.userRecordName);
+  } catch (err) {
+    console.warn('Could not check admin status:', err);
+    CURRENT_MANAGER.isAdmin = false;
+  }
+  try {
+    await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email);
+  } catch (err) {
+    console.warn('Could not update user directory entry:', err);
+  }
   await enterAfterSignIn();
 }
 
@@ -1073,8 +1368,14 @@ async function handleSignedIn(identity) {
 // venue grid and land straight on that venue's hunts. Still falls back to
 // the grid for the 0-venue ("not assigned yet") and >1-venue edge cases —
 // see the "All Venues" account-menu item / venues breadcrumb for the way
-// back if either of those ever comes up.
+// back if either of those ever comes up. Admins always land on the venues
+// grid (showing every venue) — auto-jumping into one particular venue
+// doesn't make sense once "all venues" is the point.
 async function enterAfterSignIn() {
+  if (CURRENT_MANAGER.isAdmin) {
+    await goToVenues();
+    return;
+  }
   try {
     const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
     if (venues.length === 1) {
@@ -1094,6 +1395,7 @@ function signOut() {
   CURRENT_MANAGER.userRecordName = null;
   CURRENT_MANAGER.name = '';
   CURRENT_MANAGER.email = '';
+  CURRENT_MANAGER.isAdmin = false;
   if (!USE_MOCK) {
     // Proxy to CloudKit's own (hidden) sign-out button, since CloudKit JS
     // doesn't expose a plain programmatic "sign out" call — it's meant to be
@@ -1112,7 +1414,7 @@ if (USE_MOCK) {
     try {
       const manager = await Store.signIn();
       Object.assign(CURRENT_MANAGER, manager);
-      await enterAfterSignIn();
+      await finishSignIn();
     } finally {
       signInBtn.disabled = false;
     }
