@@ -469,6 +469,8 @@ const draftClueId = () => `draft_${draftClueSeq++}`;
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${name}`).classList.add('active');
+  document.getElementById('app-shell').style.display = name === 'signin' ? 'none' : 'flex';
+  if (name !== 'signin') setActiveNav(name);
   closeAccountMenus();
   window.scrollTo({ top: 0 });
 }
@@ -492,62 +494,50 @@ function errorHTML(title, err, retryLabel) {
 }
 
 /* ---------------------------------------------------------------
-   Topbar / breadcrumbs / account menu
+   Sidebar (nav + account menu) / page header (breadcrumbs)
 ------------------------------------------------------------------ */
 
-function renderTopbar(containerId, crumbs) {
-  const el = document.getElementById(containerId);
-  const crumbsHTML = crumbs.map((c, i) => {
-    const isLast = i === crumbs.length - 1;
-    const sep = i > 0 ? `<span class="sep">${icon('chevronRight')}</span>` : '';
-    if (isLast) return `${sep}<span class="crumb-current">${c.label}</span>`;
-    return `${sep}<span class="crumb-link" data-crumb="${i}">${c.label}</span>`;
-  }).join('');
+// Nav (Venues/Users) and the account menu are chrome that doesn't change
+// per-view — built once after sign-in rather than re-rendered on every
+// navigation like the old per-view topbar was. setActiveNav (called from
+// showView) is the only per-navigation update this needs.
+function renderSidebar() {
+  const navVenues = document.getElementById('nav-venues');
+  const navUsers = document.getElementById('nav-users');
+  navVenues.innerHTML = `${icon('building')} Venues`;
+  navVenues.addEventListener('click', goToVenues);
+  navUsers.innerHTML = `${icon('person')} Users`;
+  navUsers.style.display = CURRENT_MANAGER.isAdmin ? '' : 'none';
+  navUsers.addEventListener('click', goToUsers);
 
+  const el = document.getElementById('sidebar-account');
   el.innerHTML = `
-    <div class="crumbs">
-      <span class="brand" style="margin-right:6px;">
-        <span class="mark">M</span><span>Muse Console</span>
-      </span>
-      ${crumbs.length ? `<span class="sep">${icon('chevronRight')}</span>` : ''}
-      ${crumbsHTML}
-    </div>
-    <div class="account">
-      <div class="account-menu-wrap">
-        <button class="account-btn" id="account-btn">
+    <div class="account-menu-wrap">
+      <button class="account-btn" id="account-btn">
+        <span class="avatar">${icon('person')}</span>
+        <span class="account-meta">
           <span class="account-name">${escapeHTML(CURRENT_MANAGER.name)}</span>
-          ${CURRENT_MANAGER.isAdmin ? adminBadgeHTML() : ''}
-          <span class="avatar">${icon('person')}</span>
-        </button>
-        <div class="account-dropdown glass-strong" id="account-dropdown">
-          <div class="who">
-            <div class="n">${escapeHTML(CURRENT_MANAGER.name)}</div>
-            <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
-          </div>
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="menu-venues">${icon('building')} All Venues</button>
-          ${CURRENT_MANAGER.isAdmin ? `<button class="dropdown-item" id="menu-users">${icon('person')} Manage Users</button>` : ''}
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
+          <span class="account-role">${CURRENT_MANAGER.isAdmin ? 'Administrator' : 'Manager'}</span>
+        </span>
+        ${icon('chevronDown')}
+      </button>
+      <div class="account-dropdown glass-strong" id="account-dropdown">
+        <div class="who">
+          <div class="n">${escapeHTML(CURRENT_MANAGER.name)}</div>
+          <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
         </div>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
       </div>
     </div>
   `;
-
-  crumbs.forEach((c, i) => {
-    if (i === crumbs.length - 1) return;
-    el.querySelector(`[data-crumb="${i}"]`).addEventListener('click', c.onClick);
-  });
 
   el.querySelector('#account-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     el.querySelector('#account-dropdown').classList.toggle('open');
   });
-  el.querySelector('#menu-venues').addEventListener('click', () => { closeAccountMenus(); goToVenues(); });
-  const menuUsers = el.querySelector('#menu-users');
-  if (menuUsers) menuUsers.addEventListener('click', () => { closeAccountMenus(); goToUsers(); });
   el.querySelector('#menu-signout').addEventListener('click', () => { closeAccountMenus(); signOut(); });
   el.querySelector('#menu-copy-id').addEventListener('click', async () => {
     closeAccountMenus();
@@ -557,6 +547,39 @@ function renderTopbar(containerId, crumbs) {
     } catch {
       showToast('tag', CURRENT_MANAGER.userRecordName || 'No ID available');
     }
+  });
+}
+
+// Highlights the sidebar nav item for the current section — Hunts and the
+// Hunt editor are both reached by drilling into a venue, so they keep
+// "Venues" highlighted rather than adding nav items of their own.
+function setActiveNav(view) {
+  const section = (view === 'hunts' || view === 'editor') ? 'venues' : view;
+  document.getElementById('nav-venues').classList.toggle('active', section === 'venues');
+  document.getElementById('nav-users').classList.toggle('active', section === 'users');
+}
+
+function renderPageHeader(crumbs) {
+  const el = document.getElementById('page-header');
+  if (!crumbs.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'flex';
+
+  const crumbsHTML = crumbs.map((c, i) => {
+    const isLast = i === crumbs.length - 1;
+    const sep = i > 0 ? `<span class="sep">${icon('chevronRight')}</span>` : '';
+    if (isLast) return `${sep}<span class="crumb-current">${c.label}</span>`;
+    return `${sep}<span class="crumb-link" data-crumb="${i}">${c.label}</span>`;
+  }).join('');
+
+  el.innerHTML = `<div class="crumbs">${crumbsHTML}</div>`;
+
+  crumbs.forEach((c, i) => {
+    if (i === crumbs.length - 1) return;
+    el.querySelector(`[data-crumb="${i}"]`).addEventListener('click', c.onClick);
   });
 }
 
@@ -582,7 +605,7 @@ function renderSearchBox(containerId, placeholder, value, onInput) {
 async function goToVenues() {
   state.venueId = null;
   state.huntId = null;
-  renderTopbar('topbar-venues', []);
+  renderPageHeader([]);
   renderSearchBox('venue-search-box', 'Search venues', state.venueSearch, (v) => {
     state.venueSearch = v;
     renderVenuesGrid();
@@ -735,7 +758,7 @@ function emptyState(iconName, title, desc) {
 async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
-  renderTopbar('topbar-users', [{ label: 'All Users' }]);
+  renderPageHeader([]);
   renderSearchBox('user-search-box', 'Search users', state.userSearch, (v) => {
     state.userSearch = v;
     renderUsersList();
@@ -974,7 +997,7 @@ async function goToHunts(venueId) {
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
-  renderTopbar('topbar-hunts', [
+  renderPageHeader([
     { label: 'Venues', onClick: goToVenues },
     { label: escapeHTML(venue.name) },
   ]);
@@ -1059,7 +1082,7 @@ async function openEditor(huntId, venueId) {
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
-  renderTopbar('topbar-editor', [
+  renderPageHeader([
     { label: 'Venues', onClick: goToVenues },
     { label: escapeHTML(venue.name), onClick: () => goToHunts(venueId) },
     { label: state.isNewHunt ? 'New Hunt' : 'Loading…' },
@@ -1120,7 +1143,7 @@ async function openEditor(huntId, venueId) {
 }
 
 function syncCrumbTitle() {
-  const crumbCurrent = document.querySelector('#topbar-editor .crumb-current');
+  const crumbCurrent = document.querySelector('#page-header .crumb-current');
   if (crumbCurrent) crumbCurrent.textContent = state.draft.title || (state.isNewHunt ? 'New Hunt' : 'Hunt');
 }
 
@@ -1572,6 +1595,7 @@ async function finishSignIn() {
   } catch (err) {
     console.warn('Could not update user directory entry:', err);
   }
+  renderSidebar();
   await enterAfterSignIn();
 }
 

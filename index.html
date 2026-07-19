@@ -4,11 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
-<link rel="stylesheet" href="styles.css?v=20260718n" />
+<link rel="stylesheet" href="styles.css?v=20260719n" />
 </head>
 <body>
-<div class="backdrop"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
-
 <div id="app">
 
   <!-- ============ SIGN IN ============ -->
@@ -32,125 +30,143 @@
     </div>
   </section>
 
-  <!-- ============ VENUES ============ -->
-  <section id="view-venues" class="view">
-    <header class="topbar glass" id="topbar-venues"></header>
-    <div class="content">
-      <div class="section-head">
-        <h1 class="section-title" id="venues-title">Your Venues</h1>
-        <div class="section-actions">
-          <div class="search-box glass" id="venue-search-box"></div>
-          <button class="btn btn-prominent" id="btn-new-venue" style="display:none;"></button>
-        </div>
-      </div>
-      <div id="venues-grid" class="grid"></div>
-    </div>
-  </section>
+  <!-- ============ APP SHELL (sidebar + main area, shown once signed in) ============ -->
+  <div id="app-shell">
 
-  <!-- ============ HUNTS (for a venue) ============ -->
-  <section id="view-hunts" class="view">
-    <header class="topbar glass" id="topbar-hunts"></header>
-    <div class="content">
-      <div class="section-head">
-        <h1 class="section-title" id="hunts-title">Hunts</h1>
-        <div class="section-actions">
-          <div class="search-box glass" id="hunt-search-box"></div>
-          <button class="btn btn-prominent" id="btn-new-hunt"></button>
-        </div>
-      </div>
-      <div id="hunts-list"></div>
-    </div>
-  </section>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand"><span class="mark">M</span><span>Muse Console</span></div>
+      <nav class="sidebar-nav">
+        <button class="nav-item" type="button" id="nav-venues"></button>
+        <button class="nav-item" type="button" id="nav-users" style="display:none;"></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-account" id="sidebar-account"></div>
+    </aside>
 
-  <!-- ============ USERS (administrators only) ============ -->
-  <section id="view-users" class="view">
-    <header class="topbar glass" id="topbar-users"></header>
-    <div class="content">
-      <div class="section-head">
-        <h1 class="section-title">All Users</h1>
-        <div class="section-actions">
-          <div class="search-box glass" id="user-search-box"></div>
-          <select class="user-filter-select" id="user-filter-select">
-            <option value="all">All Users</option>
-            <option value="app">App Users</option>
-            <option value="managers">Managers</option>
-            <option value="admins">Administrators</option>
-          </select>
-          <button class="btn btn-glass" id="btn-toggle-ids"></button>
-        </div>
-      </div>
-      <div id="users-list"></div>
-    </div>
-  </section>
+    <div class="main-area">
+      <header class="page-header" id="page-header"></header>
 
-  <!-- ============ HUNT EDITOR ============ -->
-  <section id="view-editor" class="view">
-    <header class="topbar glass" id="topbar-editor"></header>
-    <div class="content">
-      <div class="section-head">
-        <h1 class="section-title" id="editor-title">Edit Hunt</h1>
-      </div>
+      <main class="page-content">
 
-      <div class="editor-grid">
-        <div class="editor-col">
-
-          <div class="panel glass">
-            <p class="panel-title">Hunt Details</p>
-            <div class="field">
-              <label class="label" for="input-hunt-title">Title</label>
-              <input type="text" id="input-hunt-title" placeholder="e.g. Dinosaur Trail" />
-            </div>
-            <div class="field">
-              <label class="label" for="input-hunt-desc">Description</label>
-              <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
-            </div>
-          </div>
-
-          <div class="panel glass">
-            <p class="panel-title">
-              <span>Clues</span>
-              <span class="badge" id="clue-count-badge">0</span>
-            </p>
-            <div class="clue-list" id="clue-list"></div>
-            <button class="btn add-clue-btn" id="btn-add-clue" style="margin-top:10px;">
-              ${'' /* filled by JS */}
-            </button>
-          </div>
-
-          <div class="editor-footer glass">
-            <button class="btn btn-destructive" id="btn-delete-hunt"></button>
-            <div style="flex:1"></div>
-            <button class="btn btn-glass" id="btn-cancel-hunt"></button>
-            <button class="btn btn-prominent" id="btn-save-hunt"></button>
-          </div>
-
-        </div>
-
-        <div class="preview-col">
-          <div class="phone-frame glass-strong">
-            <div class="phone-notch"></div>
-            <div class="phone-title" id="pv-venue-name">Venue</div>
-            <div class="pv-progress">
-              <div class="pv-progress-label" id="pv-progress-label">Clue 1 of 1</div>
-              <div class="pv-bars" id="pv-bars"></div>
-            </div>
-            <div class="pv-card glass" id="pv-card">
-              <div class="pv-card-head">
-                <span id="pv-hunt-title">Hunt Title</span>
-                <span>💡</span>
+        <!-- ============ VENUES ============ -->
+        <section id="view-venues" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title" id="venues-title">Your Venues</h1>
+              <div class="section-actions">
+                <div class="search-box glass" id="venue-search-box"></div>
+                <button class="btn btn-prominent" id="btn-new-venue" style="display:none;"></button>
               </div>
-              <div class="pv-card-body placeholder" id="pv-card-body">Select or add a clue to preview it here.</div>
             </div>
-            <div class="pv-footer-btn">Scan Exhibit Tag</div>
+            <div id="venues-grid" class="grid"></div>
           </div>
-        </div>
-      </div>
+        </section>
+
+        <!-- ============ HUNTS (for a venue) ============ -->
+        <section id="view-hunts" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title" id="hunts-title">Hunts</h1>
+              <div class="section-actions">
+                <div class="search-box glass" id="hunt-search-box"></div>
+                <button class="btn btn-prominent" id="btn-new-hunt"></button>
+              </div>
+            </div>
+            <div id="hunts-list"></div>
+          </div>
+        </section>
+
+        <!-- ============ USERS (administrators only) ============ -->
+        <section id="view-users" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title">All Users</h1>
+              <div class="section-actions">
+                <div class="search-box glass" id="user-search-box"></div>
+                <select class="user-filter-select" id="user-filter-select">
+                  <option value="all">All Users</option>
+                  <option value="app">App Users</option>
+                  <option value="managers">Managers</option>
+                  <option value="admins">Administrators</option>
+                </select>
+                <button class="btn btn-glass" id="btn-toggle-ids"></button>
+              </div>
+            </div>
+            <div id="users-list"></div>
+          </div>
+        </section>
+
+        <!-- ============ HUNT EDITOR ============ -->
+        <section id="view-editor" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title" id="editor-title">Edit Hunt</h1>
+            </div>
+
+            <div class="editor-grid">
+              <div class="editor-col">
+
+                <div class="panel glass">
+                  <p class="panel-title">Hunt Details</p>
+                  <div class="field">
+                    <label class="label" for="input-hunt-title">Title</label>
+                    <input type="text" id="input-hunt-title" placeholder="e.g. Dinosaur Trail" />
+                  </div>
+                  <div class="field">
+                    <label class="label" for="input-hunt-desc">Description</label>
+                    <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
+                  </div>
+                </div>
+
+                <div class="panel glass">
+                  <p class="panel-title">
+                    <span>Clues</span>
+                    <span class="badge" id="clue-count-badge">0</span>
+                  </p>
+                  <div class="clue-list" id="clue-list"></div>
+                  <button class="btn add-clue-btn" id="btn-add-clue" style="margin-top:10px;">
+                    ${'' /* filled by JS */}
+                  </button>
+                </div>
+
+                <div class="editor-footer glass">
+                  <button class="btn btn-destructive" id="btn-delete-hunt"></button>
+                  <div style="flex:1"></div>
+                  <button class="btn btn-glass" id="btn-cancel-hunt"></button>
+                  <button class="btn btn-prominent" id="btn-save-hunt"></button>
+                </div>
+
+              </div>
+
+              <div class="preview-col">
+                <div class="phone-frame glass-strong">
+                  <div class="phone-notch"></div>
+                  <div class="phone-title" id="pv-venue-name">Venue</div>
+                  <div class="pv-progress">
+                    <div class="pv-progress-label" id="pv-progress-label">Clue 1 of 1</div>
+                    <div class="pv-bars" id="pv-bars"></div>
+                  </div>
+                  <div class="pv-card" id="pv-card">
+                    <div class="pv-card-head">
+                      <span id="pv-hunt-title">Hunt Title</span>
+                      <span>💡</span>
+                    </div>
+                    <div class="pv-card-body placeholder" id="pv-card-body">Select or add a clue to preview it here.</div>
+                  </div>
+                  <div class="pv-footer-btn">Scan Exhibit Tag</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
     </div>
-  </section>
+  </div>
 
 </div>
 
-<!-- ============ Glass alert overlay (confirm / feedback) ============ -->
+<!-- ============ Alert overlay (confirm / feedback) ============ -->
 <div class="overlay" id="overlay">
   <div class="overlay-scrim" id="overlay-scrim"></div>
   <div class="alert-card glass-strong" id="alert-card"></div>
@@ -164,8 +180,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260718n"></script>
-<script src="icons.js?v=20260718n"></script>
-<script src="app.js?v=20260718n"></script>
+<script src="config.js?v=20260719n"></script>
+<script src="icons.js?v=20260719n"></script>
+<script src="app.js?v=20260719n"></script>
 </body>
 </html>
