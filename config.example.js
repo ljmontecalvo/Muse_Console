@@ -1,5 +1,9 @@
 /* ---------------------------------------------------------------
-   Muse Console — CloudKit configuration
+   Muse Console — CloudKit configuration (TEMPLATE)
+
+   Copy this file to config.js (which is gitignored — see .gitignore)
+   and fill in your real apiToken there. Never commit config.js itself;
+   that's exactly how the previous token ended up in git history.
 
    Leave apiToken blank to keep running against mock data (useful
    for UI work without touching CloudKit). Fill it in once you've
@@ -52,7 +56,7 @@
 
 const CLOUDKIT_CONFIG = {
   containerIdentifier: 'iCloud.com.MuseApplications.Muse',
-  apiToken: '02c63961ddac3b3f0eaa070047dcc7794bec29a9cf4a36268dcc8e5aa063336d', // <-- paste your Development Client API Token here
+  apiToken: '', // <-- paste your Development Client API Token here (local file only, gitignored)
   environment: 'development',
 };
 
