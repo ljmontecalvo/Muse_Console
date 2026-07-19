@@ -203,9 +203,19 @@ const CloudKitStore = {
     return response.records.map(recordToClue).sort((a, b) => a.order - b.order);
   },
 
-  async saveHunt(huntId, venueId, data, clueList, originalClueIds) {
+  async saveHunt(huntId, venueId, data, clueList, originalClueIds, huntChangeTag) {
+    // CloudKit requires recordChangeTag + operationType: 'update' to modify an
+    // existing record — without them it's treated as a create, which fails
+    // with "record to insert already exists" for anything that already has
+    // a recordName. Creates (no recordName yet) don't need either.
     const huntRecord = huntId
-      ? { recordName: huntId, recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description } } }
+      ? {
+          recordName: huntId,
+          recordChangeTag: huntChangeTag,
+          operationType: 'update',
+          recordType: 'Hunt',
+          fields: { title: { value: data.title }, description: { value: data.description } },
+        }
       : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, venueReference: { value: ckRefSave(venueId) } } };
 
     const huntResp = await publicDB.saveRecords([huntRecord]);
@@ -228,7 +238,11 @@ const CloudKitStore = {
           huntReference: { value: ckRefSave(finalHuntId) },
         },
       };
-      if (!isNew) record.recordName = c.id;
+      if (!isNew) {
+        record.recordName = c.id;
+        record.recordChangeTag = c.recordChangeTag;
+        record.operationType = 'update';
+      }
       return record;
     });
 
@@ -268,6 +282,7 @@ const state = {
   isNewHunt: false,
   draft: { title: '', description: '', clues: [] },
   originalClueIds: new Set(),
+  huntChangeTag: null,
   expandedClueId: null,
   venueSearch: '',
   huntSearch: '',
@@ -590,9 +605,11 @@ async function openEditor(huntId, venueId) {
     }
     state.draft = { title: h.title, description: h.description, clues: clueList.map(c => ({ ...c })) };
     state.originalClueIds = new Set(clueList.map(c => c.id));
+    state.huntChangeTag = h.recordChangeTag;
   } else {
     state.draft = { title: '', description: '', clues: [] };
     state.originalClueIds = new Set();
+    state.huntChangeTag = null;
   }
 
   syncCrumbTitle();
@@ -950,7 +967,8 @@ async function saveHunt() {
       state.venueId,
       { title, description: state.draft.description.trim() },
       state.draft.clues,
-      state.originalClueIds
+      state.originalClueIds,
+      state.huntChangeTag
     );
     showToast('checkCircle', 'Changes Saved');
     await goToHunts(state.venueId);

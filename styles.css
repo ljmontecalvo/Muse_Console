@@ -225,13 +225,17 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .topbar {
   position: sticky;
-  top: 0;
+  /* The 12px top gap lives in `top`, not margin-top — sticky elements don't
+     reliably keep a margin-top once they're actually stuck to the viewport
+     edge (it was collapsing away on scroll). `top` doesn't have that problem
+     and gives the same resting gap even before any scrolling happens. */
+  top: 12px;
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  margin: 12px;
+  margin: 0 12px 12px 12px;
   border-radius: var(--radius-card);
 }
 

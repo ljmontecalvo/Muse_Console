@@ -29,4 +29,4 @@ const CLOUDKIT_CONFIG = {
 
 // Where "Request Tag" emails go — you, since physical NFC tags have to be
 // manufactured and shipped to a venue before a clue's tag can go live.
-const TAG_REQUEST_EMAIL = 'landonjmontecalvo@gmail.com';
+const TAG_REQUEST_EMAIL = 'tech@muse-apps.com';
