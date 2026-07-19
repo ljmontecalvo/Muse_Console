@@ -270,6 +270,7 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   padding: 8px;
   z-index: 30;
   display: none;
+  border-radius: var(--radius-card);
 }
 .account-dropdown.open { display: block; }
 .account-dropdown .who { padding: 10px 12px; }
