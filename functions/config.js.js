@@ -28,4 +28,5 @@ export async function onRequestGet({ env }) {
       'Content-Type': 'application/javascript; charset=utf-8',
       'Cache-Control': 'no-store',
     },
+  });
 }
