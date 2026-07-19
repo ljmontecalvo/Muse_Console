@@ -21,13 +21,17 @@
         are treated as "pending" (see recordToClue in app.js).
 
    Admin feature (isMuseAdministrator on the built-in Users type):
-     5. Add a new custom record type `AppUser` with fields `name` (String)
-        and `email` (String). Every sign-in upserts one of these, keyed by
-        using the person's CloudKit userRecordName AS the record's own
-        recordName — this is the "directory" the admin Users page lists,
-        since CloudKit deliberately won't let client code query/list every
-        record of its built-in Users type (privacy), only fetch one by a
-        recordName you already have.
+     5. Add a new custom record type `AppUser` with fields `userRecordName`
+        (String), `name` (String), and `email` (String). Every sign-in
+        upserts one of these — this is the "directory" the admin Users
+        page lists, since CloudKit deliberately won't let client code
+        query/list every record of its built-in Users type (privacy), only
+        fetch one by a recordName you already have. Note the AppUser
+        record's own recordName is NOT the person's userRecordName (it's
+        `appuser_<userRecordName>`) — recordName has to be unique across
+        the whole database, not per type, and that name is already taken
+        by their built-in Users record. userRecordName is stored as a
+        plain field instead, which is why the field needs to exist.
      6. Security Roles -> AppUser -> grant Authenticated Create + Write
         (same coarse trust-your-team posture as Hunt/Clue — see chat).
      7. Security Roles -> Venue -> create a NEW custom role, e.g. "Muse

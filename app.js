@@ -224,12 +224,20 @@ const CloudKitStore = {
   // recordChangeTag needed) if it does — exactly the upsert semantics
   // needed here, since we don't know which case we're in without an extra
   // fetch first.
+  //
+  // The AppUser record's OWN recordName can't just be the person's
+  // userRecordName — recordName is unique across the whole database, not
+  // per record type, and that name is already taken by their built-in
+  // Users record ("invalid attempt to update record from type 'Users' to
+  // 'AppUser'"). Prefixing it keeps the upsert deterministic (no need to
+  // fetch first to know if one already exists) while guaranteeing no
+  // collision with the reserved type.
   async upsertDirectoryEntry(userRecordName, name, email) {
     const response = await publicDB.saveRecords([{
-      recordName: userRecordName,
+      recordName: 'appuser_' + userRecordName,
       recordType: 'AppUser',
       operationType: 'forceUpdate',
-      fields: { name: { value: name }, email: { value: email } },
+      fields: { userRecordName: { value: userRecordName }, name: { value: name }, email: { value: email } },
     }]);
     assertNoErrors(response);
   },
@@ -238,7 +246,7 @@ const CloudKitStore = {
     const response = await publicDB.performQuery({ recordType: 'AppUser' });
     assertNoErrors(response);
     return response.records.map(r => ({
-      userRecordName: r.recordName,
+      userRecordName: r.fields.userRecordName && r.fields.userRecordName.value,
       name: r.fields.name && r.fields.name.value,
       email: r.fields.email && r.fields.email.value,
     }));
