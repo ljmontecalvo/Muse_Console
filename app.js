@@ -807,6 +807,24 @@ function emptyState(iconName, title, desc) {
 async function goToHuntsHome() {
   state.venueId = null;
   state.huntId = null;
+
+  // Same shortcut enterAfterSignIn() already uses: a manager assigned to
+  // exactly one venue has no real use for a flat "every hunt" list, so skip
+  // straight to that venue's hunts instead. Admins always see the full list —
+  // there's no single "my venue" for someone with access to all of them.
+  if (!CURRENT_MANAGER.isAdmin) {
+    try {
+      const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+      if (venues.length === 1) {
+        venuesCache = venues;
+        await goToHunts(venues[0].id);
+        return;
+      }
+    } catch (err) {
+      console.warn('Could not check venue count for the Hunts nav, falling back to the full list:', err);
+    }
+  }
+
   renderPageHeader([]);
   renderSearchBox('hunts-home-search-box', 'Search hunts', state.huntsHomeSearch, (v) => {
     state.huntsHomeSearch = v;
