@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
-<link rel="stylesheet" href="styles.css?v=20260718l" />
+<link rel="stylesheet" href="styles.css?v=20260718m" />
 </head>
 <body>
 <div class="backdrop"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
@@ -69,6 +69,12 @@
         <h1 class="section-title">All Users</h1>
         <div class="section-actions">
           <div class="search-box glass" id="user-search-box"></div>
+          <select class="user-filter-select" id="user-filter-select">
+            <option value="all">All Users</option>
+            <option value="app">App Users</option>
+            <option value="managers">Managers</option>
+            <option value="admins">Administrators</option>
+          </select>
           <button class="btn btn-glass" id="btn-toggle-ids"></button>
         </div>
       </div>
@@ -157,8 +163,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260718l"></script>
-<script src="icons.js?v=20260718l"></script>
-<script src="app.js?v=20260718l"></script>
+<script src="config.js?v=20260718m"></script>
+<script src="icons.js?v=20260718m"></script>
+<script src="app.js?v=20260718m"></script>
 </body>
 </html>

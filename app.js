@@ -442,6 +442,7 @@ const state = {
   huntSearch: '',
   userSearch: '',
   showUserIds: false,
+  userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
 };
 
 let draftClueSeq = 1;
@@ -662,6 +663,13 @@ async function goToUsers() {
     renderUsersList();
   });
 
+  const filterSelect = document.getElementById('user-filter-select');
+  filterSelect.value = state.userFilter;
+  filterSelect.onchange = () => {
+    state.userFilter = filterSelect.value;
+    renderUsersList();
+  };
+
   const toggleBtn = document.getElementById('btn-toggle-ids');
   const syncToggleLabel = () => {
     toggleBtn.innerHTML = `${icon('tag')} ${state.showUserIds ? 'Hide' : 'Show'} Manager IDs`;
@@ -692,9 +700,23 @@ async function renderUsersList() {
     return;
   }
 
+  const managesAnyVenue = (u) => venues.some(v => (v.managers || []).includes(u.userRecordName));
+
+  const matchesFilter = (u) => {
+    switch (state.userFilter) {
+      case 'admins': return u.isAdmin;
+      case 'managers': return managesAnyVenue(u);
+      // "App Users" = a plain signed-in account with no elevated role yet —
+      // not managing any venue and not an administrator.
+      case 'app': return !u.isAdmin && !managesAnyVenue(u);
+      default: return true;
+    }
+  };
+
   const filtered = users.filter(u =>
-    u.name.toLowerCase().includes(state.userSearch.toLowerCase()) ||
-    u.email.toLowerCase().includes(state.userSearch.toLowerCase())
+    matchesFilter(u) &&
+    (u.name.toLowerCase().includes(state.userSearch.toLowerCase()) ||
+     u.email.toLowerCase().includes(state.userSearch.toLowerCase()))
   );
 
   if (users.length === 0) {
@@ -703,7 +725,10 @@ async function renderUsersList() {
     return;
   }
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No users match “${escapeHTML(state.userSearch)}”.</div></div>`;
+    const desc = state.userSearch
+      ? `No users match “${escapeHTML(state.userSearch)}”.`
+      : 'No users match this filter.';
+    listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">${desc}</div></div>`;
     return;
   }
 
