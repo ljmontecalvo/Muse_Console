@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
-<link rel="stylesheet" href="styles.css?v=20260719p" />
+<link rel="stylesheet" href="styles.css?v=20260719q" />
 </head>
 <body>
 <div id="app">
@@ -37,7 +37,9 @@
       <div class="sidebar-brand"><span class="mark">M</span><span>Muse Console</span></div>
       <nav class="sidebar-nav">
         <button class="nav-item" type="button" id="nav-venues"></button>
-        <button class="nav-item" type="button" id="nav-users" style="display:none;"></button>
+        <button class="nav-item" type="button" id="nav-hunts-home"></button>
+        <button class="nav-item" type="button" id="nav-users"></button>
+        <button class="nav-item" type="button" id="nav-settings"></button>
       </nav>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-account" id="sidebar-account"></div>
@@ -62,6 +64,19 @@
           </div>
         </section>
 
+        <!-- ============ ALL HUNTS (every venue you can access) ============ -->
+        <section id="view-hunts-home" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title">All Hunts</h1>
+              <div class="section-actions">
+                <div class="search-box glass" id="hunts-home-search-box"></div>
+              </div>
+            </div>
+            <div id="hunts-home-list"></div>
+          </div>
+        </section>
+
         <!-- ============ HUNTS (for a venue) ============ -->
         <section id="view-hunts" class="view">
           <div class="content">
@@ -81,7 +96,7 @@
           <div class="content">
             <div class="section-head">
               <h1 class="section-title">All Users</h1>
-              <div class="section-actions">
+              <div class="section-actions" id="users-actions">
                 <div class="search-box glass" id="user-search-box"></div>
                 <select class="user-filter-select" id="user-filter-select">
                   <option value="all">All Users</option>
@@ -93,6 +108,16 @@
               </div>
             </div>
             <div id="users-list"></div>
+          </div>
+        </section>
+
+        <!-- ============ SETTINGS (administrators only) ============ -->
+        <section id="view-settings" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title">Settings</h1>
+            </div>
+            <div id="settings-body"></div>
           </div>
         </section>
 
@@ -180,8 +205,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260719p"></script>
-<script src="icons.js?v=20260719p"></script>
-<script src="app.js?v=20260719p"></script>
+<script src="config.js?v=20260719q"></script>
+<script src="icons.js?v=20260719q"></script>
+<script src="app.js?v=20260719q"></script>
 </body>
 </html>

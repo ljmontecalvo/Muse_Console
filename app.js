@@ -483,6 +483,7 @@ const state = {
   userSearch: '',
   showUserIds: false,
   userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
+  huntsHomeSearch: '',
 };
 
 let draftClueSeq = 1;
@@ -519,6 +520,17 @@ function errorHTML(title, err, retryLabel) {
   </div>`;
 }
 
+// Shown in place of a page's real content for signed-in managers viewing an
+// admin-only page — the nav item itself stays visible for everyone (rather
+// than winking in/out depending on role), this is what fills the page.
+function restrictedStateHTML(message) {
+  return `<div class="empty-state">
+    ${icon('lock')}
+    <div class="es-title">Restricted</div>
+    <div class="es-desc">${escapeHTML(message)}</div>
+  </div>`;
+}
+
 /* ---------------------------------------------------------------
    Sidebar (nav + account menu) / page header (breadcrumbs)
 ------------------------------------------------------------------ */
@@ -528,13 +540,21 @@ function errorHTML(title, err, retryLabel) {
 // navigation like the old per-view topbar was. setActiveNav (called from
 // showView) is the only per-navigation update this needs.
 function renderSidebar() {
+  // Every nav item is visible to everyone regardless of role — a page that's
+  // actually restricted (Users, Settings) says so with its own lock/message
+  // once you're on it, rather than the sidebar hiding the destination.
   const navVenues = document.getElementById('nav-venues');
+  const navHuntsHome = document.getElementById('nav-hunts-home');
   const navUsers = document.getElementById('nav-users');
+  const navSettings = document.getElementById('nav-settings');
   navVenues.innerHTML = `${icon('building')} Venues`;
   navVenues.addEventListener('click', goToVenues);
+  navHuntsHome.innerHTML = `${icon('map')} Hunts`;
+  navHuntsHome.addEventListener('click', goToHuntsHome);
   navUsers.innerHTML = `${icon('person')} Users`;
-  navUsers.style.display = CURRENT_MANAGER.isAdmin ? '' : 'none';
   navUsers.addEventListener('click', goToUsers);
+  navSettings.innerHTML = `${icon('gear')} Settings`;
+  navSettings.addEventListener('click', goToSettings);
 
   const el = document.getElementById('sidebar-account');
   el.innerHTML = `
@@ -576,13 +596,15 @@ function renderSidebar() {
   });
 }
 
-// Highlights the sidebar nav item for the current section — Hunts and the
-// Hunt editor are both reached by drilling into a venue, so they keep
-// "Venues" highlighted rather than adding nav items of their own.
+// Highlights the sidebar nav item for the current section — the venue-scoped
+// hunts list and the hunt editor are both reached by drilling into a venue
+// (not via the top-level Hunts nav item), so they keep "Venues" highlighted.
 function setActiveNav(view) {
   const section = (view === 'hunts' || view === 'editor') ? 'venues' : view;
-  document.getElementById('nav-venues').classList.toggle('active', section === 'venues');
-  document.getElementById('nav-users').classList.toggle('active', section === 'users');
+  ['venues', 'hunts-home', 'users', 'settings'].forEach((id) => {
+    const el = document.getElementById(`nav-${id}`);
+    if (el) el.classList.toggle('active', id === section);
+  });
 }
 
 function renderPageHeader(crumbs) {
@@ -778,6 +800,73 @@ function emptyState(iconName, title, desc) {
 }
 
 /* ---------------------------------------------------------------
+   All Hunts view (every hunt across every venue you can access —
+   a flat shortcut into the hunt editor without picking a venue first)
+------------------------------------------------------------------ */
+
+async function goToHuntsHome() {
+  state.venueId = null;
+  state.huntId = null;
+  renderPageHeader([]);
+  renderSearchBox('hunts-home-search-box', 'Search hunts', state.huntsHomeSearch, (v) => {
+    state.huntsHomeSearch = v;
+    renderHuntsHomeList();
+  });
+
+  showView('hunts-home');
+  await renderHuntsHomeList();
+}
+
+let huntsHomeCache = [];
+
+async function renderHuntsHomeList() {
+  const listEl = document.getElementById('hunts-home-list');
+  listEl.innerHTML = loadingHTML('Loading hunts…');
+
+  try {
+    const venues = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    const huntsPerVenue = await Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => [])));
+    huntsHomeCache = venues.flatMap((v, i) => huntsPerVenue[i].map(h => ({ ...h, venueId: v.id, venueName: v.name })));
+  } catch (err) {
+    listEl.innerHTML = errorHTML('Could not load hunts', err);
+    listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsHomeList);
+    return;
+  }
+
+  if (huntsHomeCache.length === 0) {
+    listEl.innerHTML = '';
+    listEl.appendChild(emptyState(
+      'map', 'No Hunts Yet',
+      CURRENT_MANAGER.isAdmin ? 'No Hunt records exist in CloudKit yet.' : "No hunts exist for your venues yet."
+    ));
+    return;
+  }
+
+  const filtered = huntsHomeCache.filter(h => h.title.toLowerCase().includes(state.huntsHomeSearch.toLowerCase()));
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No hunts match “${escapeHTML(state.huntsHomeSearch)}”.</div></div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(h => `
+    <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
+      <div class="hr-icon">${icon('map')}</div>
+      <div class="hr-body">
+        <div class="hr-title">${escapeHTML(h.title)}</div>
+        <div class="hr-sub">${escapeHTML(h.venueName)}</div>
+      </div>
+      ${icon('chevronRight')}
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('[data-hunt-home]').forEach(row => {
+    row.addEventListener('click', () => openEditor(row.dataset.huntHome, row.dataset.venue));
+  });
+}
+
+/* ---------------------------------------------------------------
    Users view (administrators only)
 ------------------------------------------------------------------ */
 
@@ -785,6 +874,17 @@ async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
   renderPageHeader([]);
+  showView('users');
+
+  const actionsEl = document.getElementById('users-actions');
+  if (!CURRENT_MANAGER.isAdmin) {
+    actionsEl.style.display = 'none';
+    document.getElementById('users-list').innerHTML =
+      restrictedStateHTML("You need administrator access to view and manage the people signed in to this console.");
+    return;
+  }
+  actionsEl.style.display = '';
+
   renderSearchBox('user-search-box', 'Search users', state.userSearch, (v) => {
     state.userSearch = v;
     renderUsersList();
@@ -808,7 +908,6 @@ async function goToUsers() {
     renderUsersList();
   };
 
-  showView('users');
   await renderUsersList();
 }
 
@@ -955,7 +1054,7 @@ function userRowHTML(u, venues) {
         <div class="hr-body">
           <div class="hr-title">
             <span class="user-name-display">${escapeHTML(u.name) || 'Unnamed'}</span>
-            ${u.isAdmin ? adminBadgeHTML() : ''}
+            ${u.isAdmin ? adminBadgeHTML() : managedVenues.length ? managerBadgeHTML() : appUserBadgeHTML()}
             <button class="btn-icon-sm btn-edit-name" type="button" title="Edit name">${icon('pencil')}</button>
           </div>
           <div class="hr-sub">${escapeHTML(u.email)}</div>
@@ -1015,6 +1114,41 @@ function confirmUnassignManager(user, venueId, venues) {
       } },
     ],
   });
+}
+
+/* ---------------------------------------------------------------
+   Settings view (administrators only)
+------------------------------------------------------------------ */
+
+async function goToSettings() {
+  state.venueId = null;
+  state.huntId = null;
+  renderPageHeader([]);
+  showView('settings');
+
+  const el = document.getElementById('settings-body');
+  if (!CURRENT_MANAGER.isAdmin) {
+    el.innerHTML = restrictedStateHTML('You need administrator access to view console settings.');
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="panel glass" style="max-width:480px;">
+      <p class="panel-title">Console</p>
+      <div class="field">
+        <label class="label">CloudKit Container</label>
+        <div class="settings-value">${escapeHTML(CLOUDKIT_CONFIG.containerIdentifier)}</div>
+      </div>
+      <div class="field">
+        <label class="label">Environment</label>
+        <div class="settings-value">${escapeHTML(CLOUDKIT_CONFIG.environment)}</div>
+      </div>
+      <div class="field" style="margin-bottom:0;">
+        <label class="label">Tag Request Email</label>
+        <div class="settings-value">${escapeHTML(TAG_REQUEST_EMAIL)}</div>
+      </div>
+    </div>
+  `;
 }
 
 /* ---------------------------------------------------------------
@@ -1325,6 +1459,12 @@ function tagStatusBadgeHTML(status) {
 
 function adminBadgeHTML() {
   return `<span class="status-badge status-admin">${icon('gear')}Administrator</span>`;
+}
+function managerBadgeHTML() {
+  return `<span class="status-badge status-manager">${icon('building')}Manager</span>`;
+}
+function appUserBadgeHTML() {
+  return `<span class="status-badge status-appuser">${icon('person')}User</span>`;
 }
 
 function clueRowHTML(c, index) {

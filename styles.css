@@ -580,6 +580,13 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .field { margin-bottom: 14px; }
 .field:last-child { margin-bottom: 0; }
+.settings-value {
+  font-size: 14.5px;
+  padding: 10px 12px;
+  background: var(--surface-hover);
+  border-radius: 8px;
+  word-break: break-all;
+}
 textarea.hunt-desc { min-height: 64px; }
 
 .clue-list { display: flex; flex-direction: column; gap: 10px; }
@@ -629,6 +636,8 @@ textarea.hunt-desc { min-height: 64px; }
 .status-requested { background: rgba(255, 149, 0, 0.14); color: var(--orange); }
 .status-installed { background: rgba(52, 199, 89, 0.14); color: var(--green); }
 .status-admin { background: rgba(var(--accent-rgb), 0.14); color: var(--accent); font-size: 13px; vertical-align: middle; margin-left: 8px; }
+.status-manager { background: rgba(255, 149, 0, 0.14); color: var(--orange); font-size: 13px; vertical-align: middle; margin-left: 8px; }
+.status-appuser { background: var(--surface-hover); color: var(--text-secondary); font-size: 13px; vertical-align: middle; margin-left: 8px; }
 
 .tag-display-row { display: flex; align-items: center; gap: 8px; }
 .clue-tag-code {
