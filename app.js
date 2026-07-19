@@ -76,6 +76,7 @@ const MockStore = (() => {
     { userRecordName: 'someone_else', name: 'Jordan Reyes', email: 'jordan.reyes@example.com', isAdmin: false },
     { userRecordName: 'mock_user_3', name: 'Casey Nguyen', email: 'casey.nguyen@example.com', isAdmin: false },
   ];
+
   return {
     async signIn() {
       return { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com' };
