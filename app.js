@@ -97,6 +97,10 @@ const MockStore = (() => {
     async allUsers() {
       return appUsers.map(u => ({ ...u }));
     },
+    async getDirectoryEntry(userRecordName) {
+      const u = appUsers.find(x => x.userRecordName === userRecordName);
+      return u ? { name: u.name, email: u.email } : null;
+    },
     async allVenues() {
       return venues.map(v => ({ ...v }));
     },
@@ -274,6 +278,19 @@ const CloudKitStore = {
       name: r.fields.name && r.fields.name.value,
       email: r.fields.email && r.fields.email.value,
     }));
+  },
+
+  // Used at sign-in to recover a name Apple didn't share this time — e.g. a
+  // returning sign-in (Apple mostly only shares name/email on the very first
+  // authorization) or one an admin set by hand from the Users page.
+  async getDirectoryEntry(userRecordName) {
+    const response = await publicDB.fetchRecords('appuser_' + userRecordName);
+    if (response.hasErrors || !response.records || !response.records[0]) return null;
+    const rec = response.records[0];
+    return {
+      name: rec.fields.name && rec.fields.name.value,
+      email: rec.fields.email && rec.fields.email.value,
+    };
   },
 
   // No filterBy — an admin needs every venue regardless of who manages it.
@@ -866,6 +883,14 @@ async function renderUsersList() {
           // true: an admin manually setting this name is always authoritative,
           // unlike a sign-in's best-effort/possibly-fallback name.
           await Store.upsertDirectoryEntry(u.userRecordName, newName, u.email, true);
+          // Editing your own row wouldn't otherwise show up until next
+          // sign-in, since the sidebar only reads CURRENT_MANAGER, not the
+          // directory record this just wrote to.
+          if (u.userRecordName === CURRENT_MANAGER.userRecordName) {
+            CURRENT_MANAGER.name = newName;
+            CURRENT_MANAGER.hasRealName = true;
+            renderSidebar();
+          }
           showToast('checkCircle', 'Name Updated');
           await renderUsersList();
         } catch (err) {
@@ -1589,6 +1614,22 @@ async function finishSignIn() {
   } catch (err) {
     console.warn('Could not check admin status:', err);
     CURRENT_MANAGER.isAdmin = false;
+  }
+  // Apple only shares name/email on (roughly) the first authorization — a
+  // returning sign-in commonly comes back with neither, which would
+  // otherwise show the "User a1b2c3" placeholder every time even though a
+  // real name was captured (or manually set by an admin) previously. Prefer
+  // whatever's already in the directory before falling back to that.
+  if (!CURRENT_MANAGER.hasRealName) {
+    try {
+      const existing = await Store.getDirectoryEntry(CURRENT_MANAGER.userRecordName);
+      if (existing && existing.name) {
+        CURRENT_MANAGER.name = existing.name;
+        CURRENT_MANAGER.hasRealName = true;
+      }
+    } catch (err) {
+      console.warn('Could not look up existing directory entry:', err);
+    }
   }
   try {
     await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email, CURRENT_MANAGER.hasRealName);
