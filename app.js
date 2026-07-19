@@ -169,8 +169,15 @@ function ckRefSave(recordName) {
 
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
+    // Batch saveRecords/deleteRecords calls can partially fail — logging the
+    // full per-record breakdown (not just the first error) is the only way
+    // to tell which specific record failed and why when only one of several
+    // clues in the same save fails, e.g. with a different reason each time.
+    console.warn('CloudKit request had errors:', response.errors);
     const first = response.errors && response.errors[0];
-    throw new Error((first && (first.reason || first.serverErrorCode)) || 'CloudKit request failed');
+    const reason = (first && (first.reason || first.serverErrorCode)) || 'CloudKit request failed';
+    const suffix = response.errors && response.errors.length > 1 ? ` (+${response.errors.length - 1} more)` : '';
+    throw new Error(reason + suffix);
   }
 }
 
