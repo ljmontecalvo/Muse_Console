@@ -100,6 +100,11 @@ const MockStore = (() => {
     async allVenues() {
       return venues.map(v => ({ ...v }));
     },
+    async createVenue(name, address) {
+      const id = nextId('venue');
+      venues.push({ id, name, address, managers: [] });
+      return id;
+    },
     async assignManager(venueId, userRecordName) {
       const v = venues.find(x => x.id === venueId);
       if (v && !v.managers.includes(userRecordName)) v.managers.push(userRecordName);
@@ -279,6 +284,15 @@ const CloudKitStore = {
     const response = await publicDB.performQuery({ recordType: 'Venue' });
     assertNoErrors(response);
     return response.records.map(recordToVenue);
+  },
+
+  async createVenue(name, address) {
+    const response = await publicDB.saveRecords([{
+      recordType: 'Venue',
+      fields: { name: { value: name }, address: { value: address }, managers: { value: [] } },
+    }]);
+    assertNoErrors(response);
+    return response.records[0].recordName;
   },
 
   async assignManager(venueId, userRecordName) {
@@ -579,8 +593,72 @@ async function goToVenues() {
     ? `All Venues ${adminBadgeHTML()}`
     : 'Your Venues';
 
+  // Venue creation is admin-only — the Venue record type's Write role in
+  // CloudKit is restricted to the Muse Administrators role (see config.js),
+  // so a non-admin's create would fail server-side anyway; hiding the
+  // button just keeps the UI honest about that.
+  const newVenueBtn = document.getElementById('btn-new-venue');
+  newVenueBtn.style.display = CURRENT_MANAGER.isAdmin ? '' : 'none';
+  newVenueBtn.innerHTML = `${icon('plus')} Add Venue`;
+  newVenueBtn.onclick = showAddVenueForm;
+
   showView('venues');
   await renderVenuesGrid();
+}
+
+function showAddVenueForm() {
+  const card = document.getElementById('alert-card');
+  card.innerHTML = `
+    <div class="alert-icon">${icon('building')}</div>
+    <h2 class="alert-title">Add Venue</h2>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Venue Name</label>
+      <input type="text" id="venue-form-name" placeholder="e.g. Riverside Natural History Museum" />
+    </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Address</label>
+      <input type="text" id="venue-form-address" placeholder="e.g. 400 Riverside Dr, Springfield" />
+    </div>
+    <p class="alert-msg" id="venue-form-error" style="display:none;color:var(--red);"></p>
+    <div class="alert-actions">
+      <button class="btn btn-glass" type="button" id="venue-form-cancel">Cancel</button>
+      <button class="btn btn-prominent" type="button" id="venue-form-save">${icon('plus')} Add Venue</button>
+    </div>
+  `;
+  document.getElementById('overlay').classList.add('open');
+
+  const nameInput = document.getElementById('venue-form-name');
+  const addressInput = document.getElementById('venue-form-address');
+  const errorEl = document.getElementById('venue-form-error');
+  const saveBtn = document.getElementById('venue-form-save');
+
+  nameInput.focus();
+  document.getElementById('venue-form-cancel').addEventListener('click', closeOverlay);
+
+  saveBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    const address = addressInput.value.trim();
+    if (!name) {
+      errorEl.textContent = 'Give this venue a name before adding it.';
+      errorEl.style.display = '';
+      nameInput.focus();
+      return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Adding…`;
+    try {
+      await Store.createVenue(name, address);
+      closeOverlay();
+      showToast('checkCircle', 'Venue Added');
+      await renderVenuesGrid();
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `${icon('plus')} Add Venue`;
+      errorEl.textContent = err.message || 'Something went wrong talking to CloudKit.';
+      errorEl.style.display = '';
+    }
+  });
 }
 
 let venuesCache = [];
