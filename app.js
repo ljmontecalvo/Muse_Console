@@ -285,7 +285,16 @@ const CloudKitStore = {
   // authorization) or one an admin set by hand from the Users page.
   async getDirectoryEntry(userRecordName) {
     const response = await publicDB.fetchRecords('appuser_' + userRecordName);
-    if (response.hasErrors || !response.records || !response.records[0]) return null;
+    if (response.hasErrors) {
+      // CloudKit JS reports failures (permission denied, record not found,
+      // etc.) as a resolved { hasErrors: true } response rather than a
+      // rejection — silently treating that the same as "no entry yet" was
+      // hiding the actual reason. Log it so it shows up in the console
+      // instead of just silently not finding a name that really is there.
+      console.warn('getDirectoryEntry fetch had errors:', response.errors);
+      return null;
+    }
+    if (!response.records || !response.records[0]) return null;
     const rec = response.records[0];
     return {
       name: rec.fields.name && rec.fields.name.value,
