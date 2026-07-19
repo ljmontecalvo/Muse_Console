@@ -39,7 +39,7 @@ if (!USE_MOCK) {
   publicDB = container.publicCloudDatabase;
 }
 
-const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: false };
+const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: false, hasRealName: false };
 
 /* ---------------------------------------------------------------
    Mock data store (demo mode)
@@ -79,19 +79,19 @@ const MockStore = (() => {
 
   return {
     async signIn() {
-      return { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com' };
+      return { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com', hasRealName: true };
     },
     async checkIsAdmin(userRecordName) {
       const u = appUsers.find(x => x.userRecordName === userRecordName);
       return !!(u && u.isAdmin);
     },
-    async upsertDirectoryEntry(userRecordName, name, email) {
+    async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
       const existing = appUsers.find(x => x.userRecordName === userRecordName);
       if (existing) {
-        existing.name = name;
-        existing.email = email;
+        if (hasRealName) existing.name = name;
+        if (email) existing.email = email;
       } else {
-        appUsers.push({ userRecordName, name, email, isAdmin: false });
+        appUsers.push({ userRecordName, name: hasRealName ? name : '', email: email || '', isAdmin: false });
       }
     },
     async allUsers() {
@@ -232,12 +232,23 @@ const CloudKitStore = {
   // 'AppUser'"). Prefixing it keeps the upsert deterministic (no need to
   // fetch first to know if one already exists) while guaranteeing no
   // collision with the reserved type.
-  async upsertDirectoryEntry(userRecordName, name, email) {
+  //
+  // hasRealName distinguishes an Apple-shared name from our own locally
+  // computed placeholder (see identityToManager) — only a real name is
+  // written here, and 'update'-style operations only touch the fields
+  // they include, so omitting `name` entirely leaves whatever's already
+  // stored untouched. Without this, every sign-in with no real name from
+  // Apple would silently overwrite a name an admin had manually set on
+  // the Users page.
+  async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
+    const fields = { userRecordName: { value: userRecordName } };
+    if (hasRealName) fields.name = { value: name };
+    if (email) fields.email = { value: email };
     const response = await publicDB.saveRecords([{
       recordName: 'appuser_' + userRecordName,
       recordType: 'AppUser',
       operationType: 'forceUpdate',
-      fields: { userRecordName: { value: userRecordName }, name: { value: name }, email: { value: email } },
+      fields,
     }]);
     assertNoErrors(response);
   },
@@ -389,10 +400,19 @@ function identityToManager(identity) {
   const nameParts = identity.nameComponents
     ? [identity.nameComponents.givenName, identity.nameComponents.familyName].filter(Boolean)
     : [];
+  const email = (identity.lookupInfo && identity.lookupInfo.emailAddress) || '';
+  // Apple only sends a real name/email here if the API token was created
+  // with "Request user discoverability at sign in" AND the person consents
+  // to sharing when prompted — neither is guaranteed, so this commonly
+  // comes back empty. Fall back to something distinguishable rather than
+  // a flat "Manager" for every unnamed person; an admin can always set a
+  // real name afterward from the Users page (pencil icon next to a name).
+  const fallbackName = email ? email.split('@')[0] : `User ${identity.userRecordName.slice(-6)}`;
   return {
     userRecordName: identity.userRecordName,
-    name: nameParts.length ? nameParts.join(' ') : 'Manager',
-    email: (identity.lookupInfo && identity.lookupInfo.emailAddress) || '',
+    name: nameParts.length ? nameParts.join(' ') : fallbackName,
+    hasRealName: nameParts.length > 0,
+    email,
   };
 }
 
@@ -671,6 +691,42 @@ async function renderUsersList() {
   filtered.forEach((u) => {
     const row = listEl.querySelector(`[data-user="${u.userRecordName}"]`);
 
+    row.querySelector('.btn-edit-name').addEventListener('click', () => {
+      const titleEl = row.querySelector('.hr-title');
+      titleEl.innerHTML = `
+        <input type="text" class="name-edit-input" value="${escapeAttr(u.name)}" placeholder="Full name" />
+        <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+        <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+      `;
+      const input = titleEl.querySelector('.name-edit-input');
+      input.focus();
+      input.select();
+
+      const save = async () => {
+        const newName = input.value.trim();
+        if (!newName) return;
+        try {
+          // true: an admin manually setting this name is always authoritative,
+          // unlike a sign-in's best-effort/possibly-fallback name.
+          await Store.upsertDirectoryEntry(u.userRecordName, newName, u.email, true);
+          showToast('checkCircle', 'Name Updated');
+          await renderUsersList();
+        } catch (err) {
+          showAlert({
+            icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Save Name',
+            message: err.message || 'Something went wrong talking to CloudKit.',
+            actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+          });
+        }
+      };
+      titleEl.querySelector('.save').addEventListener('click', save);
+      titleEl.querySelector('.cancel').addEventListener('click', () => renderUsersList());
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') save();
+        if (e.key === 'Escape') renderUsersList();
+      });
+    });
+
     row.querySelectorAll('[data-remove-venue]').forEach((btn) => {
       btn.addEventListener('click', () => confirmUnassignManager(u, btn.dataset.removeVenue, venues));
     });
@@ -706,7 +762,11 @@ function userRowHTML(u, venues) {
       <div class="user-card-head">
         <div class="hr-icon">${icon('person')}</div>
         <div class="hr-body">
-          <div class="hr-title">${escapeHTML(u.name)} ${u.isAdmin ? adminBadgeHTML() : ''}</div>
+          <div class="hr-title">
+            <span class="user-name-display">${escapeHTML(u.name) || 'Unnamed'}</span>
+            ${u.isAdmin ? adminBadgeHTML() : ''}
+            <button class="btn-icon-sm btn-edit-name" type="button" title="Edit name">${icon('pencil')}</button>
+          </div>
           <div class="hr-sub">${escapeHTML(u.email)}</div>
         </div>
       </div>
@@ -1366,7 +1426,7 @@ async function finishSignIn() {
     CURRENT_MANAGER.isAdmin = false;
   }
   try {
-    await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email);
+    await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email, CURRENT_MANAGER.hasRealName);
   } catch (err) {
     console.warn('Could not update user directory entry:', err);
   }
