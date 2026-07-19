@@ -219,37 +219,45 @@ const CloudKitStore = {
     }
   },
 
-  // Upserts this person's directory entry. operationType: 'forceUpdate'
-  // creates the record if it doesn't exist yet and updates it (no
-  // recordChangeTag needed) if it does — exactly the upsert semantics
-  // needed here, since we don't know which case we're in without an extra
-  // fetch first.
+  // Upserts this person's directory entry. operationType: 'forceUpdate' was
+  // supposed to mean "create if missing, update if present, no changeTag
+  // needed" per Apple's docs, but in practice against this container it
+  // still hits "record to insert already exists" once the record is real —
+  // same failure signature as the original Hunt/Clue save bug. Rather than
+  // trust that operationType's documented behavior a second time, fetch
+  // first and explicitly choose create vs. update, exactly like
+  // saveHunt/assignManager already do reliably.
   //
   // The AppUser record's OWN recordName can't just be the person's
   // userRecordName — recordName is unique across the whole database, not
   // per record type, and that name is already taken by their built-in
   // Users record ("invalid attempt to update record from type 'Users' to
-  // 'AppUser'"). Prefixing it keeps the upsert deterministic (no need to
-  // fetch first to know if one already exists) while guaranteeing no
-  // collision with the reserved type.
+  // 'AppUser'"). Prefixing it keeps the lookup deterministic while
+  // guaranteeing no collision with the reserved type.
   //
   // hasRealName distinguishes an Apple-shared name from our own locally
   // computed placeholder (see identityToManager) — only a real name is
-  // written here, and 'update'-style operations only touch the fields
-  // they include, so omitting `name` entirely leaves whatever's already
-  // stored untouched. Without this, every sign-in with no real name from
-  // Apple would silently overwrite a name an admin had manually set on
-  // the Users page.
+  // written here, and 'update' only touches the fields it includes, so
+  // omitting `name` entirely leaves whatever's already stored untouched.
+  // Without this, every sign-in with no real name from Apple would
+  // silently overwrite a name an admin had manually set on the Users page.
   async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
+    const recordName = 'appuser_' + userRecordName;
+    let existing = null;
+    const fetchResp = await publicDB.fetchRecords(recordName);
+    if (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) {
+      existing = fetchResp.records[0];
+    }
+
     const fields = { userRecordName: { value: userRecordName } };
     if (hasRealName) fields.name = { value: name };
     if (email) fields.email = { value: email };
-    const response = await publicDB.saveRecords([{
-      recordName: 'appuser_' + userRecordName,
-      recordType: 'AppUser',
-      operationType: 'forceUpdate',
-      fields,
-    }]);
+
+    const record = existing
+      ? { recordName, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'AppUser', fields }
+      : { recordName, recordType: 'AppUser', fields };
+
+    const response = await publicDB.saveRecords([record]);
     assertNoErrors(response);
   },
 
@@ -433,6 +441,7 @@ const state = {
   venueSearch: '',
   huntSearch: '',
   userSearch: '',
+  showUserIds: false,
 };
 
 let draftClueSeq = 1;
@@ -652,6 +661,18 @@ async function goToUsers() {
     state.userSearch = v;
     renderUsersList();
   });
+
+  const toggleBtn = document.getElementById('btn-toggle-ids');
+  const syncToggleLabel = () => {
+    toggleBtn.innerHTML = `${icon('tag')} ${state.showUserIds ? 'Hide' : 'Show'} Manager IDs`;
+  };
+  syncToggleLabel();
+  toggleBtn.onclick = () => {
+    state.showUserIds = !state.showUserIds;
+    syncToggleLabel();
+    renderUsersList();
+  };
+
   showView('users');
   await renderUsersList();
 }
@@ -690,6 +711,16 @@ async function renderUsersList() {
 
   filtered.forEach((u) => {
     const row = listEl.querySelector(`[data-user="${u.userRecordName}"]`);
+
+    const copyIdBtn = row.querySelector('.btn-copy-userid');
+    if (copyIdBtn) copyIdBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(u.userRecordName);
+        showToast('checkCircle', 'Manager ID Copied');
+      } catch {
+        showToast('copy', u.userRecordName);
+      }
+    });
 
     row.querySelector('.btn-edit-name').addEventListener('click', () => {
       const titleEl = row.querySelector('.hr-title');
@@ -768,6 +799,12 @@ function userRowHTML(u, venues) {
             <button class="btn-icon-sm btn-edit-name" type="button" title="Edit name">${icon('pencil')}</button>
           </div>
           <div class="hr-sub">${escapeHTML(u.email)}</div>
+          ${state.showUserIds ? `
+            <div class="hr-sub user-id-row">
+              <span class="user-id-value">${escapeHTML(u.userRecordName)}</span>
+              <button class="btn-icon-sm btn-copy-userid" type="button" title="Copy Manager ID">${icon('copy')}</button>
+            </div>
+          ` : ''}
         </div>
       </div>
       <div class="user-venue-chips">

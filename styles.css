@@ -478,6 +478,13 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 }
 .venue-picker:focus { border-color: var(--accent); outline: none; }
 
+.user-id-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.user-id-value {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 11px; color: var(--text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
+}
+
 .empty-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 80px 20px; color: var(--text-secondary);
