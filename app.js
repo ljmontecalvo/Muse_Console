@@ -52,9 +52,9 @@ const MockStore = (() => {
     { id: 'venue_3', name: 'Harbor Maritime Museum', address: '88 Wharf Rd, Bayport', managers: ['someone_else'] },
   ];
   let hunts = [
-    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.' },
-    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.' },
-    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.' },
+    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History' },
+    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History' },
+    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '' },
   ];
   let clues = [
     { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'K7$Q2M9!XB4@RT8&WZ3P', tagStatus: 'installed' },
@@ -196,6 +196,9 @@ function recordToHunt(r) {
     recordChangeTag: r.recordChangeTag,
     title: r.fields.title && r.fields.title.value,
     description: r.fields.description && r.fields.description.value,
+    // Hunt records saved before this field existed won't have it — treated
+    // as "no folder" (shown in the Uncategorized group), not an error.
+    folder: (r.fields.folder && r.fields.folder.value) || '',
     venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
   };
 }
@@ -406,9 +409,9 @@ const CloudKitStore = {
           recordChangeTag: huntChangeTag,
           operationType: 'update',
           recordType: 'Hunt',
-          fields: { title: { value: data.title }, description: { value: data.description } },
+          fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' } },
         }
-      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, venueReference: { value: ckRefSave(venueId) } } };
+      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' }, venueReference: { value: ckRefSave(venueId) } } };
 
     const huntResp = await publicDB.saveRecords([huntRecord]);
     assertNoErrors(huntResp);
@@ -481,7 +484,7 @@ const state = {
   venueId: null,
   huntId: null,
   isNewHunt: false,
-  draft: { title: '', description: '', clues: [] },
+  draft: { title: '', description: '', folder: '', clues: [] },
   originalClueIds: new Set(),
   huntChangeTag: null,
   expandedClueId: null,
@@ -491,6 +494,7 @@ const state = {
   showUserIds: false,
   userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
   huntsHomeSearch: '',
+  collapsedHuntFolders: new Set(), // folder names collapsed on the All Hunts screen; resets on reload
 };
 
 let draftClueSeq = 1;
@@ -915,16 +919,64 @@ async function renderHuntsHomeList() {
     return;
   }
 
-  listEl.innerHTML = filtered.map(h => `
-    <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
-      <div class="hr-icon">${icon('map')}</div>
-      <div class="hr-body">
-        <div class="hr-title">${escapeHTML(h.title)}</div>
-        <div class="hr-sub">${escapeHTML(h.venueName)}</div>
+  // Group by folder (blank/missing -> "Uncategorized", always last). This is
+  // the whole "folder" feature — there's no separate Folder record, a group
+  // only exists because one or more hunts share that string in their
+  // `folder` field (see the Folder input in the hunt editor).
+  const groups = new Map();
+  filtered.forEach((h) => {
+    const key = (h.folder || '').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  });
+  const folderKeys = [...groups.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
+  if (groups.has('')) folderKeys.push('');
+
+  // While actively searching, expand everything regardless of saved collapse
+  // state so matches are never hidden — but don't mutate the saved state,
+  // so collapsed folders go back to collapsed once the search is cleared.
+  const searching = state.huntsHomeSearch.trim().length > 0;
+
+  listEl.innerHTML = folderKeys.map((key) => {
+    const hunts = groups.get(key);
+    const isUncategorized = key === '';
+    const displayName = isUncategorized ? 'Uncategorized' : key;
+    const collapsed = !searching && state.collapsedHuntFolders.has(key);
+    return `
+      <div class="folder-group ${collapsed ? 'collapsed' : ''}">
+        <button class="folder-header" type="button" data-folder-key="${escapeAttr(key)}">
+          ${icon('folder')}
+          <span class="folder-name">${escapeHTML(displayName)}</span>
+          <span class="folder-count">${hunts.length}</span>
+          <span class="folder-chevron">${icon('chevronDown')}</span>
+        </button>
+        <div class="folder-hunts">
+          ${hunts.map(h => `
+            <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
+              <div class="hr-icon">${icon('map')}</div>
+              <div class="hr-body">
+                <div class="hr-title">${escapeHTML(h.title)}</div>
+                <div class="hr-sub">${escapeHTML(h.venueName)}</div>
+              </div>
+              ${icon('chevronRight')}
+            </div>
+          `).join('')}
+        </div>
       </div>
-      ${icon('chevronRight')}
-    </div>
-  `).join('');
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.folder-header').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.folderKey;
+      if (state.collapsedHuntFolders.has(key)) {
+        state.collapsedHuntFolders.delete(key);
+      } else {
+        state.collapsedHuntFolders.add(key);
+      }
+      renderHuntsHomeList();
+    });
+  });
 
   listEl.querySelectorAll('[data-hunt-home]').forEach(row => {
     row.addEventListener('click', () => openEditor(row.dataset.huntHome, row.dataset.venue));
@@ -1355,11 +1407,11 @@ async function openEditor(huntId, venueId) {
       document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId));
       return;
     }
-    state.draft = { title: h.title, description: h.description, clues: clueList.map(c => ({ ...c })) };
+    state.draft = { title: h.title, description: h.description, folder: h.folder || '', clues: clueList.map(c => ({ ...c })) };
     state.originalClueIds = new Set(clueList.map(c => c.id));
     state.huntChangeTag = h.recordChangeTag;
   } else {
-    state.draft = { title: '', description: '', clues: [] };
+    state.draft = { title: '', description: '', folder: '', clues: [] };
     state.originalClueIds = new Set();
     state.huntChangeTag = null;
   }
@@ -1368,10 +1420,13 @@ async function openEditor(huntId, venueId) {
 
   const titleInput = document.getElementById('input-hunt-title');
   const descInput = document.getElementById('input-hunt-desc');
+  const folderInput = document.getElementById('input-hunt-folder');
   titleInput.value = state.draft.title;
   descInput.value = state.draft.description;
+  folderInput.value = state.draft.folder;
   titleInput.oninput = (e) => { state.draft.title = e.target.value; renderPreview(); syncCrumbTitle(); };
   descInput.oninput = (e) => { state.draft.description = e.target.value; };
+  folderInput.oninput = (e) => { state.draft.folder = e.target.value; };
 
   const addBtn = document.getElementById('btn-add-clue');
   addBtn.innerHTML = `${icon('plusCircle')} Add Clue`;
@@ -1727,7 +1782,7 @@ async function saveHunt() {
     await Store.saveHunt(
       state.huntId,
       state.venueId,
-      { title, description: state.draft.description.trim() },
+      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim() },
       state.draft.clues,
       state.originalClueIds,
       state.huntChangeTag

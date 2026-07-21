@@ -14,7 +14,7 @@
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="stylesheet" href="styles.css?v=20260719s" />
+<link rel="stylesheet" href="styles.css?v=20260719t" />
 </head>
 <body>
 <div id="app">
@@ -151,6 +151,10 @@
                     <label class="label" for="input-hunt-desc">Description</label>
                     <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
                   </div>
+                  <div class="field" style="margin-bottom:0;">
+                    <label class="label" for="input-hunt-folder">Folder <span class="label-optional">(optional)</span></label>
+                    <input type="text" id="input-hunt-folder" placeholder="e.g. Natural History" />
+                  </div>
                 </div>
 
                 <div class="panel glass">
@@ -215,8 +219,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260719s"></script>
-<script src="icons.js?v=20260719s"></script>
-<script src="app.js?v=20260719s"></script>
+<script src="config.js?v=20260719t"></script>
+<script src="icons.js?v=20260719t"></script>
+<script src="app.js?v=20260719t"></script>
 </body>
 </html>
