@@ -550,6 +550,25 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   padding: 10px 6px;
 }
 
+/* Groups an "All Venues" view of the hunts list into one section per
+   venue, each with its own folder groups and its own Add Folder button —
+   folders belong to exactly one venue, so there's no single button that
+   could add one without knowing which venue it's for. */
+.venue-section { margin-bottom: 28px; }
+.venue-section:last-child { margin-bottom: 0; }
+.venue-section-heading {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 6px 10px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.venue-section-name { font-size: 16px; font-weight: 700; }
+.venue-add-folder { font-size: 12.5px; padding: 6px 12px; }
+
+/* Venue switcher at the top of the All Hunts screen — sized to its
+   content rather than the full-width default .folder-select gets in the
+   hunt editor. */
+.venue-filter-select { width: auto; min-width: 150px; }
+
 /* Inline "new folder name" row shown by the Add Folder button — same
    shape as .folder-header so it slots in above the other groups. */
 .folder-header-creating {

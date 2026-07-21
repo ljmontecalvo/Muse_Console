@@ -67,9 +67,11 @@ const MockStore = (() => {
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
 
-  // Folder names created empty (via "Add Folder" on the All Hunts screen)
-  // before any hunt has been moved into them — see allFolders/addFolder.
-  let folderRegistry = [];
+  // Folder names created empty (via "Add Folder") before any hunt has been
+  // moved into them — see allFolders/addFolder. Keyed by venueId: folders
+  // are scoped per venue, so two venues can each have their own
+  // same-named folder without merging.
+  let folderRegistry = {};
 
   // The signed-in demo identity is the site owner, so it's an administrator
   // by default — a good way to exercise the admin views in demo mode. Note
@@ -151,18 +153,22 @@ const MockStore = (() => {
       hunts = hunts.filter(h => h.id !== huntId);
       clues = clues.filter(c => c.huntId !== huntId);
     },
-    // Union of explicitly-registered (possibly still empty) folders and
-    // whatever folder names are already in use on hunts — a folder created
-    // before this registry existed, or set by typing directly into an old
-    // build's free-text Folder field, still shows up here.
-    async allFolders() {
-      const fromHunts = hunts.map(h => (h.folder || '').trim()).filter(Boolean);
-      return [...new Set([...folderRegistry, ...fromHunts])].sort((a, b) => a.localeCompare(b));
+    // Union, scoped to one venue, of explicitly-registered (possibly still
+    // empty) folders and whatever folder names are already in use on that
+    // venue's hunts — a folder created before this registry existed, or
+    // set by typing directly into an old build's free-text Folder field,
+    // still shows up here.
+    async allFolders(venueId) {
+      const fromHunts = hunts.filter(h => h.venueId === venueId).map(h => (h.folder || '').trim()).filter(Boolean);
+      const registered = folderRegistry[venueId] || [];
+      return [...new Set([...registered, ...fromHunts])].sort((a, b) => a.localeCompare(b));
     },
-    async addFolder(name) {
+    async addFolder(venueId, name) {
       const trimmed = (name || '').trim();
-      if (trimmed && !folderRegistry.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
-        folderRegistry.push(trimmed);
+      if (!trimmed) return;
+      const list = folderRegistry[venueId] || (folderRegistry[venueId] = []);
+      if (!list.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
+        list.push(trimmed);
       }
     },
     async setHuntFolder(huntId, recordChangeTag, folder) {
@@ -191,7 +197,9 @@ function ckRefSave(recordName) {
 
 // Fixed recordName for the single shared FolderRegistry record — see
 // config.js item 11.
-const FOLDER_REGISTRY_RECORD_NAME = 'folder_registry';
+function folderRegistryRecordName(venueId) {
+  return 'folder_registry_' + venueId;
+}
 
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
@@ -479,36 +487,37 @@ const CloudKitStore = {
     assertNoErrors(await publicDB.deleteRecords([huntId]));
   },
 
-  // Union of explicitly-registered (possibly still empty) folders and
-  // whatever folder names are already in use on hunts, same reasoning as
-  // MockStore.allFolders. The registry is a single fixed-name record — see
-  // config.js item 11 for why Hunt.folder alone can't represent an empty
-  // folder. Fetching a record that doesn't exist yet (nobody's used "Add
-  // Folder" so far) comes back as hasErrors, which is the expected first-run
-  // state here, not something worth logging.
-  async allFolders() {
-    const [registryResp, huntsResp] = await Promise.all([
-      publicDB.fetchRecords(FOLDER_REGISTRY_RECORD_NAME),
-      publicDB.performQuery({ recordType: 'Hunt' }),
+  // Union, scoped to one venue, of explicitly-registered (possibly still
+  // empty) folders and whatever folder names are already in use on that
+  // venue's hunts, same reasoning as MockStore.allFolders. The registry is
+  // one record per venue — see config.js item 11 for why Hunt.folder alone
+  // can't represent an empty folder, and why this isn't just a field on
+  // Venue. Fetching a record that doesn't exist yet (nobody's used "Add
+  // Folder" for this venue so far) comes back as hasErrors, which is the
+  // expected first-run state here, not something worth logging.
+  async allFolders(venueId) {
+    const [registryResp, hunts] = await Promise.all([
+      publicDB.fetchRecords(folderRegistryRecordName(venueId)),
+      this.huntsForVenue(venueId),
     ]);
     const registryRec = !registryResp.hasErrors && registryResp.records && registryResp.records[0];
     const registryNames = (registryRec && registryRec.fields.names && registryRec.fields.names.value) || [];
-    assertNoErrors(huntsResp);
-    const huntFolders = huntsResp.records.map(r => (r.fields.folder && r.fields.folder.value) || '').filter(Boolean);
+    const huntFolders = hunts.map(h => (h.folder || '').trim()).filter(Boolean);
     return [...new Set([...registryNames, ...huntFolders])].sort((a, b) => a.localeCompare(b));
   },
 
-  async addFolder(name) {
+  async addFolder(venueId, name) {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
-    const fetchResp = await publicDB.fetchRecords(FOLDER_REGISTRY_RECORD_NAME);
+    const recordName = folderRegistryRecordName(venueId);
+    const fetchResp = await publicDB.fetchRecords(recordName);
     const existing = (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) || null;
     const current = (existing && existing.fields.names && existing.fields.names.value) || [];
     if (current.some(f => f.toLowerCase() === trimmed.toLowerCase())) return;
     const updated = [...current, trimmed];
     const record = existing
-      ? { recordName: FOLDER_REGISTRY_RECORD_NAME, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'FolderRegistry', fields: { names: { value: updated } } }
-      : { recordName: FOLDER_REGISTRY_RECORD_NAME, recordType: 'FolderRegistry', fields: { names: { value: updated } } };
+      ? { recordName, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'FolderRegistry', fields: { names: { value: updated } } }
+      : { recordName, recordType: 'FolderRegistry', fields: { names: { value: updated } } };
     assertNoErrors(await publicDB.saveRecords([record]));
   },
 
@@ -566,8 +575,14 @@ const state = {
   showUserIds: false,
   userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
   huntsHomeSearch: '',
-  collapsedHuntFolders: new Set(), // folder names collapsed on the All Hunts screen; resets on reload
-  creatingFolder: false, // showing the inline "new folder name" row on the All Hunts screen
+  // Keyed by "<venueId>::<folderName>", since folders are venue-scoped —
+  // two venues can each have a same-named folder without collapsing one
+  // also collapsing the other. Resets on reload.
+  collapsedHuntFolders: new Set(),
+  // venueId of the folder currently being created inline (see the "Add
+  // Folder" button), or null when nothing's being created.
+  creatingFolderVenueId: null,
+  huntsHomeVenueFilter: '', // '' = All Venues; otherwise a venueId
 };
 
 let draftClueSeq = 1;
@@ -941,13 +956,13 @@ function folderSelectHTML(folders, selectedValue, extraClass) {
   `;
 }
 
-// Wires a folder <select>: choosing an existing folder (or "No Folder")
-// calls onChoose(value) immediately. Choosing "Add New Folder…" swaps the
-// select for an inline text input in place (same pattern as userRowHTML's
-// edit-name flow) and calls onChoose(name) once it's registered, or
-// onChoose(null) if cancelled — callers treat null as "nothing changed,
-// just re-render".
-function wireFolderSelect(selectEl, onChoose) {
+// Wires a folder <select> scoped to one venue: choosing an existing folder
+// (or "No Folder") calls onChoose(value) immediately. Choosing "Add New
+// Folder…" swaps the select for an inline text input in place (same
+// pattern as userRowHTML's edit-name flow) and calls onChoose(name) once
+// it's registered — to that venue's registry — or onChoose(null) if
+// cancelled — callers treat null as "nothing changed, just re-render".
+function wireFolderSelect(selectEl, venueId, onChoose) {
   selectEl.addEventListener('change', async () => {
     if (selectEl.value !== ADD_NEW_FOLDER_VALUE) {
       onChoose(selectEl.value);
@@ -966,7 +981,7 @@ function wireFolderSelect(selectEl, onChoose) {
       const name = input.value.trim();
       if (!name) return;
       try {
-        await Store.addFolder(name);
+        await Store.addFolder(venueId, name);
         onChoose(name);
       } catch (err) {
         showAlert({
@@ -992,7 +1007,8 @@ function wireFolderSelect(selectEl, onChoose) {
 async function goToHuntsHome() {
   state.venueId = null;
   state.huntId = null;
-  state.creatingFolder = false;
+  state.creatingFolderVenueId = null;
+  state.huntsHomeVenueFilter = '';
 
   // Same shortcut enterAfterSignIn() already uses: a manager assigned to
   // exactly one venue has no real use for a flat "every hunt" list, so skip
@@ -1017,13 +1033,6 @@ async function goToHuntsHome() {
     renderHuntsHomeList();
   });
 
-  const addFolderBtn = document.getElementById('btn-add-folder');
-  addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
-  addFolderBtn.onclick = () => {
-    state.creatingFolder = true;
-    renderHuntsHomeList();
-  };
-
   showView('hunts-home');
   await renderHuntsHomeList();
 }
@@ -1034,123 +1043,141 @@ async function renderHuntsHomeList() {
   const listEl = document.getElementById('hunts-home-list');
   listEl.innerHTML = loadingHTML('Loading hunts…');
 
-  let registryFolders = [];
+  let venues = [];
   try {
-    const venues = CURRENT_MANAGER.isAdmin
+    venues = CURRENT_MANAGER.isAdmin
       ? await Store.allVenues()
       : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
-    const [huntsPerVenue, folders] = await Promise.all([
-      Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => []))),
-      Store.allFolders().catch(() => []),
-    ]);
+    const huntsPerVenue = await Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => [])));
     huntsHomeCache = venues.flatMap((v, i) => huntsPerVenue[i].map(h => ({ ...h, venueId: v.id, venueName: v.name })));
-    registryFolders = folders;
   } catch (err) {
     listEl.innerHTML = errorHTML('Could not load hunts', err);
     listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsHomeList);
     return;
   }
 
-  if (huntsHomeCache.length === 0 && registryFolders.length === 0 && !state.creatingFolder) {
+  // Venue switcher — only worth showing when there's actually more than one
+  // venue to switch between (a manager with exactly one venue never reaches
+  // this screen at all; see the redirect above).
+  const venueFilterEl = document.getElementById('hunts-home-venue-filter');
+  if (venues.length > 1) {
+    if (!venues.some(v => v.id === state.huntsHomeVenueFilter)) state.huntsHomeVenueFilter = '';
+    venueFilterEl.style.display = '';
+    venueFilterEl.innerHTML = `
+      <option value="">All Venues</option>
+      ${venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.huntsHomeVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('')}
+    `;
+    venueFilterEl.onchange = () => {
+      state.huntsHomeVenueFilter = venueFilterEl.value;
+      renderHuntsHomeList();
+    };
+  } else {
+    venueFilterEl.style.display = 'none';
+    state.huntsHomeVenueFilter = '';
+  }
+
+  // Folders belong to exactly one venue, so "Add Folder" only makes sense
+  // once a single venue is in focus — under "All Venues" each venue's own
+  // section gets its own Add Folder button instead (see below).
+  const addFolderBtn = document.getElementById('btn-add-folder');
+  addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
+  addFolderBtn.style.display = state.huntsHomeVenueFilter ? '' : 'none';
+  addFolderBtn.onclick = () => {
+    state.creatingFolderVenueId = state.huntsHomeVenueFilter;
+    renderHuntsHomeList();
+  };
+
+  const focusedVenues = state.huntsHomeVenueFilter
+    ? venues.filter(v => v.id === state.huntsHomeVenueFilter)
+    : venues;
+
+  let registryFoldersByVenue = {};
+  try {
+    const lists = await Promise.all(focusedVenues.map(v => Store.allFolders(v.id).catch(() => [])));
+    focusedVenues.forEach((v, i) => { registryFoldersByVenue[v.id] = lists[i]; });
+  } catch (err) {
+    console.warn('Could not load folders:', err);
+  }
+
+  const searchTerm = state.huntsHomeSearch.toLowerCase();
+  const searching = state.huntsHomeSearch.trim().length > 0;
+
+  const anyContent = focusedVenues.some(v =>
+    huntsHomeCache.some(h => h.venueId === v.id) || (registryFoldersByVenue[v.id] || []).length > 0
+  );
+  if (!anyContent && !state.creatingFolderVenueId) {
     listEl.innerHTML = '';
     listEl.appendChild(emptyState(
       'map', 'No Hunts Yet',
-      CURRENT_MANAGER.isAdmin ? 'No Hunt records exist in CloudKit yet.' : "No hunts exist for your venues yet."
+      state.huntsHomeVenueFilter
+        ? `No hunts exist for ${escapeHTML(focusedVenues[0].name)} yet.`
+        : (CURRENT_MANAGER.isAdmin ? 'No Hunt records exist in CloudKit yet.' : "No hunts exist for your venues yet.")
     ));
     return;
   }
 
-  const filtered = huntsHomeCache.filter(h => h.title.toLowerCase().includes(state.huntsHomeSearch.toLowerCase()));
-  if (filtered.length === 0 && registryFolders.length === 0 && !state.creatingFolder) {
+  const anyMatches = focusedVenues.some(v =>
+    huntsHomeCache.some(h => h.venueId === v.id && h.title.toLowerCase().includes(searchTerm))
+  );
+  if (searching && !anyMatches && !focusedVenues.some(v => (registryFoldersByVenue[v.id] || []).length > 0) && !state.creatingFolderVenueId) {
     listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No hunts match “${escapeHTML(state.huntsHomeSearch)}”.</div></div>`;
     return;
   }
 
-  // Group by folder (blank/missing -> "Uncategorized", always last). A named
-  // group exists either because one or more hunts share that string in
-  // their `folder` field, or because it was explicitly registered via "Add
-  // Folder" (which is the only way an empty group — zero hunts — shows up
-  // at all; see config.js item 11).
-  const groups = new Map();
-  filtered.forEach((h) => {
-    const key = (h.folder || '').trim();
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(h);
-  });
-  registryFolders.forEach((name) => {
-    if (!groups.has(name)) groups.set(name, []);
-  });
-  const folderKeys = [...groups.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
-  if (groups.has('')) folderKeys.push('');
+  // Subgroup by venue only under "All Venues" — with one venue in focus its
+  // own heading would be redundant with the switcher above it.
+  const showVenueHeadings = !state.huntsHomeVenueFilter;
 
-  // While actively searching, expand everything regardless of saved collapse
-  // state so matches are never hidden — but don't mutate the saved state,
-  // so collapsed folders go back to collapsed once the search is cleared.
-  const searching = state.huntsHomeSearch.trim().length > 0;
-
-  const creatingRowHTML = state.creatingFolder ? `
-    <div class="folder-group">
-      <div class="folder-header-creating">
-        ${icon('folder')}
-        <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
-        <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
-        <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
-      </div>
-    </div>
-  ` : '';
-
-  listEl.innerHTML = creatingRowHTML + folderKeys.map((key) => {
-    const hunts = groups.get(key);
-    const isUncategorized = key === '';
-    const displayName = isUncategorized ? 'Uncategorized' : key;
-    const collapsed = !searching && state.collapsedHuntFolders.has(key);
-    return `
-      <div class="folder-group ${collapsed ? 'collapsed' : ''}">
-        <button class="folder-header" type="button" data-folder-key="${escapeAttr(key)}">
-          ${icon('folder')}
-          <span class="folder-name">${escapeHTML(displayName)}</span>
-          <span class="folder-count">${hunts.length}</span>
-          <span class="folder-chevron">${icon('chevronDown')}</span>
-        </button>
-        <div class="folder-hunts">
-          ${hunts.length ? hunts.map(h => huntHomeRowHTML(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
-        </div>
-      </div>
-    `;
+  listEl.innerHTML = focusedVenues.map((v) => {
+    const venueHunts = huntsHomeCache.filter(h => h.venueId === v.id && h.title.toLowerCase().includes(searchTerm));
+    const registryFolders = registryFoldersByVenue[v.id] || [];
+    const isCreatingHere = state.creatingFolderVenueId === v.id;
+    if (venueHunts.length === 0 && registryFolders.length === 0 && !isCreatingHere) return '';
+    return venueFolderSectionHTML(v, venueHunts, registryFolders, isCreatingHere, searching, showVenueHeadings);
   }).join('');
 
-  if (state.creatingFolder) {
+  if (state.creatingFolderVenueId) {
     const creatingEl = listEl.querySelector('.folder-header-creating');
-    const input = creatingEl.querySelector('.folder-new-input');
-    input.focus();
-    const cancel = () => { state.creatingFolder = false; renderHuntsHomeList(); };
-    const save = async () => {
-      const name = input.value.trim();
-      if (!name) return;
-      try {
-        await Store.addFolder(name);
-        state.creatingFolder = false;
-        showToast('checkCircle', 'Folder Added');
-        await renderHuntsHomeList();
-      } catch (err) {
-        showAlert({
-          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
-          message: err.message || 'Something went wrong talking to CloudKit.',
-          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
-        });
-      }
-    };
-    creatingEl.querySelector('.save').addEventListener('click', save);
-    creatingEl.querySelector('.cancel').addEventListener('click', cancel);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') save();
-      if (e.key === 'Escape') cancel();
-    });
+    if (creatingEl) {
+      const venueId = state.creatingFolderVenueId;
+      const input = creatingEl.querySelector('.folder-new-input');
+      input.focus();
+      const cancel = () => { state.creatingFolderVenueId = null; renderHuntsHomeList(); };
+      const save = async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        try {
+          await Store.addFolder(venueId, name);
+          state.creatingFolderVenueId = null;
+          showToast('checkCircle', 'Folder Added');
+          await renderHuntsHomeList();
+        } catch (err) {
+          showAlert({
+            icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+            message: err.message || 'Something went wrong talking to CloudKit.',
+            actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+          });
+        }
+      };
+      creatingEl.querySelector('.save').addEventListener('click', save);
+      creatingEl.querySelector('.cancel').addEventListener('click', cancel);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') save();
+        if (e.key === 'Escape') cancel();
+      });
+    }
   }
+
+  listEl.querySelectorAll('.venue-add-folder').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.creatingFolderVenueId = btn.dataset.venueAddFolder;
+      renderHuntsHomeList();
+    });
+  });
 
   listEl.querySelectorAll('.folder-header').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const key = btn.dataset.folderKey;
+      const key = btn.dataset.collapseKey;
       if (state.collapsedHuntFolders.has(key)) {
         state.collapsedHuntFolders.delete(key);
       } else {
@@ -1177,6 +1204,65 @@ async function renderHuntsHomeList() {
   });
 }
 
+// Renders one venue's worth of folder groups — either as a standalone list
+// (single venue in focus) or as one labeled section among several (All
+// Venues), each with its own Add Folder button since a folder always
+// belongs to exactly one venue.
+function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHere, searching, showHeading) {
+  const groups = new Map();
+  venueHunts.forEach((h) => {
+    const key = (h.folder || '').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  });
+  registryFolders.forEach((name) => {
+    if (!groups.has(name)) groups.set(name, []);
+  });
+  const folderKeys = [...groups.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
+  if (groups.has('')) folderKeys.push('');
+
+  const creatingRowHTML = isCreatingHere ? `
+    <div class="folder-group">
+      <div class="folder-header-creating">
+        ${icon('folder')}
+        <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
+        <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+        <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+      </div>
+    </div>
+  ` : '';
+
+  const groupsHTML = folderKeys.map((key) => {
+    const hunts = groups.get(key);
+    const isUncategorized = key === '';
+    const displayName = isUncategorized ? 'Uncategorized' : key;
+    const collapseKey = venue.id + '::' + key;
+    const collapsed = !searching && state.collapsedHuntFolders.has(collapseKey);
+    return `
+      <div class="folder-group ${collapsed ? 'collapsed' : ''}">
+        <button class="folder-header" type="button" data-collapse-key="${escapeAttr(collapseKey)}">
+          ${icon('folder')}
+          <span class="folder-name">${escapeHTML(displayName)}</span>
+          <span class="folder-count">${hunts.length}</span>
+          <span class="folder-chevron">${icon('chevronDown')}</span>
+        </button>
+        <div class="folder-hunts">
+          ${hunts.length ? hunts.map(h => huntHomeRowHTML(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const headingHTML = showHeading ? `
+    <div class="venue-section-heading">
+      <span class="venue-section-name">${escapeHTML(venue.name)}</span>
+      <button class="btn btn-glass venue-add-folder" type="button" data-venue-add-folder="${escapeAttr(venue.id)}">${icon('plus')} Add Folder</button>
+    </div>
+  ` : '';
+
+  return `<div class="venue-section">${headingHTML}${creatingRowHTML}${groupsHTML}</div>`;
+}
+
 function huntHomeRowHTML(h) {
   return `
     <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
@@ -1197,14 +1283,14 @@ function openMoveFolderPicker(actionsEl, hunt) {
   (async () => {
     let folders = [];
     try {
-      folders = await Store.allFolders();
+      folders = await Store.allFolders(hunt.venueId);
     } catch (err) {
       console.warn('Could not load folders:', err);
     }
     actionsEl.innerHTML = folderSelectHTML(folders, hunt.folder, 'folder-select folder-select-sm');
     const select = actionsEl.querySelector('select');
     select.focus();
-    wireFolderSelect(select, async (name) => {
+    wireFolderSelect(select, hunt.venueId, async (name) => {
       if (name === null) { renderHuntsHomeList(); return; }
       try {
         await Store.setHuntFolder(hunt.id, hunt.recordChangeTag, name);
@@ -1691,12 +1777,12 @@ async function renderHuntFolderField() {
   wrap.innerHTML = loadingHTML('Loading folders…');
   let folders = [];
   try {
-    folders = await Store.allFolders();
+    folders = await Store.allFolders(state.venueId);
   } catch (err) {
     console.warn('Could not load folders:', err);
   }
   wrap.innerHTML = folderSelectHTML(folders, state.draft.folder, 'folder-select');
-  wireFolderSelect(wrap.querySelector('select'), (name) => {
+  wireFolderSelect(wrap.querySelector('select'), state.venueId, (name) => {
     if (name !== null) state.draft.folder = name;
     renderHuntFolderField();
   });
