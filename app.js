@@ -67,6 +67,10 @@ const MockStore = (() => {
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
 
+  // Folder names created empty (via "Add Folder" on the All Hunts screen)
+  // before any hunt has been moved into them — see allFolders/addFolder.
+  let folderRegistry = [];
+
   // The signed-in demo identity is the site owner, so it's an administrator
   // by default — a good way to exercise the admin views in demo mode. Note
   // venue_3 above is managed by "someone_else", not mock_manager, which is
@@ -147,6 +151,24 @@ const MockStore = (() => {
       hunts = hunts.filter(h => h.id !== huntId);
       clues = clues.filter(c => c.huntId !== huntId);
     },
+    // Union of explicitly-registered (possibly still empty) folders and
+    // whatever folder names are already in use on hunts — a folder created
+    // before this registry existed, or set by typing directly into an old
+    // build's free-text Folder field, still shows up here.
+    async allFolders() {
+      const fromHunts = hunts.map(h => (h.folder || '').trim()).filter(Boolean);
+      return [...new Set([...folderRegistry, ...fromHunts])].sort((a, b) => a.localeCompare(b));
+    },
+    async addFolder(name) {
+      const trimmed = (name || '').trim();
+      if (trimmed && !folderRegistry.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
+        folderRegistry.push(trimmed);
+      }
+    },
+    async setHuntFolder(huntId, recordChangeTag, folder) {
+      const h = hunts.find(x => x.id === huntId);
+      if (h) h.folder = folder || '';
+    },
   };
 })();
 
@@ -166,6 +188,10 @@ function ckRefQuery(recordName) {
 function ckRefSave(recordName) {
   return { recordName, action: 'NONE' };
 }
+
+// Fixed recordName for the single shared FolderRegistry record — see
+// config.js item 11.
+const FOLDER_REGISTRY_RECORD_NAME = 'folder_registry';
 
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
@@ -452,6 +478,52 @@ const CloudKitStore = {
     if (clues.length) assertNoErrors(await publicDB.deleteRecords(clues.map(c => c.id)));
     assertNoErrors(await publicDB.deleteRecords([huntId]));
   },
+
+  // Union of explicitly-registered (possibly still empty) folders and
+  // whatever folder names are already in use on hunts, same reasoning as
+  // MockStore.allFolders. The registry is a single fixed-name record — see
+  // config.js item 11 for why Hunt.folder alone can't represent an empty
+  // folder. Fetching a record that doesn't exist yet (nobody's used "Add
+  // Folder" so far) comes back as hasErrors, which is the expected first-run
+  // state here, not something worth logging.
+  async allFolders() {
+    const [registryResp, huntsResp] = await Promise.all([
+      publicDB.fetchRecords(FOLDER_REGISTRY_RECORD_NAME),
+      publicDB.performQuery({ recordType: 'Hunt' }),
+    ]);
+    const registryRec = !registryResp.hasErrors && registryResp.records && registryResp.records[0];
+    const registryNames = (registryRec && registryRec.fields.names && registryRec.fields.names.value) || [];
+    assertNoErrors(huntsResp);
+    const huntFolders = huntsResp.records.map(r => (r.fields.folder && r.fields.folder.value) || '').filter(Boolean);
+    return [...new Set([...registryNames, ...huntFolders])].sort((a, b) => a.localeCompare(b));
+  },
+
+  async addFolder(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const fetchResp = await publicDB.fetchRecords(FOLDER_REGISTRY_RECORD_NAME);
+    const existing = (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) || null;
+    const current = (existing && existing.fields.names && existing.fields.names.value) || [];
+    if (current.some(f => f.toLowerCase() === trimmed.toLowerCase())) return;
+    const updated = [...current, trimmed];
+    const record = existing
+      ? { recordName: FOLDER_REGISTRY_RECORD_NAME, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'FolderRegistry', fields: { names: { value: updated } } }
+      : { recordName: FOLDER_REGISTRY_RECORD_NAME, recordType: 'FolderRegistry', fields: { names: { value: updated } } };
+    assertNoErrors(await publicDB.saveRecords([record]));
+  },
+
+  // Lightweight single-field update — cheaper than routing a folder move
+  // through saveHunt, which also expects the full clue list.
+  async setHuntFolder(huntId, recordChangeTag, folder) {
+    const response = await publicDB.saveRecords([{
+      recordName: huntId,
+      recordChangeTag,
+      operationType: 'update',
+      recordType: 'Hunt',
+      fields: { folder: { value: folder || '' } },
+    }]);
+    assertNoErrors(response);
+  },
 };
 
 function identityToManager(identity) {
@@ -495,6 +567,7 @@ const state = {
   userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
   huntsHomeSearch: '',
   collapsedHuntFolders: new Set(), // folder names collapsed on the All Hunts screen; resets on reload
+  creatingFolder: false, // showing the inline "new folder name" row on the All Hunts screen
 };
 
 let draftClueSeq = 1;
@@ -851,6 +924,67 @@ function emptyState(iconName, title, desc) {
 }
 
 /* ---------------------------------------------------------------
+   Shared folder-picker <select> — used by the hunt editor's Folder
+   field and the "Move to Folder" button on the All Hunts screen. Lists
+   every known folder name plus an "Add New Folder…" option.
+------------------------------------------------------------------ */
+
+const ADD_NEW_FOLDER_VALUE = '__add_new_folder__';
+
+function folderSelectHTML(folders, selectedValue, extraClass) {
+  return `
+    <select class="${extraClass || ''}">
+      <option value="" ${!selectedValue ? 'selected' : ''}>No Folder</option>
+      ${folders.map(f => `<option value="${escapeAttr(f)}" ${f === selectedValue ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}
+      <option value="${ADD_NEW_FOLDER_VALUE}">+ Add New Folder…</option>
+    </select>
+  `;
+}
+
+// Wires a folder <select>: choosing an existing folder (or "No Folder")
+// calls onChoose(value) immediately. Choosing "Add New Folder…" swaps the
+// select for an inline text input in place (same pattern as userRowHTML's
+// edit-name flow) and calls onChoose(name) once it's registered, or
+// onChoose(null) if cancelled — callers treat null as "nothing changed,
+// just re-render".
+function wireFolderSelect(selectEl, onChoose) {
+  selectEl.addEventListener('change', async () => {
+    if (selectEl.value !== ADD_NEW_FOLDER_VALUE) {
+      onChoose(selectEl.value);
+      return;
+    }
+    const wrap = selectEl.parentElement;
+    wrap.innerHTML = `
+      <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
+      <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+      <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+    `;
+    const input = wrap.querySelector('.folder-new-input');
+    input.focus();
+    wrap.querySelector('.cancel').addEventListener('click', () => onChoose(null));
+    const confirm = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      try {
+        await Store.addFolder(name);
+        onChoose(name);
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+      }
+    };
+    wrap.querySelector('.save').addEventListener('click', confirm);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirm();
+      if (e.key === 'Escape') onChoose(null);
+    });
+  });
+}
+
+/* ---------------------------------------------------------------
    All Hunts view (every hunt across every venue you can access —
    a flat shortcut into the hunt editor without picking a venue first)
 ------------------------------------------------------------------ */
@@ -858,6 +992,7 @@ function emptyState(iconName, title, desc) {
 async function goToHuntsHome() {
   state.venueId = null;
   state.huntId = null;
+  state.creatingFolder = false;
 
   // Same shortcut enterAfterSignIn() already uses: a manager assigned to
   // exactly one venue has no real use for a flat "every hunt" list, so skip
@@ -882,6 +1017,13 @@ async function goToHuntsHome() {
     renderHuntsHomeList();
   });
 
+  const addFolderBtn = document.getElementById('btn-add-folder');
+  addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
+  addFolderBtn.onclick = () => {
+    state.creatingFolder = true;
+    renderHuntsHomeList();
+  };
+
   showView('hunts-home');
   await renderHuntsHomeList();
 }
@@ -892,19 +1034,24 @@ async function renderHuntsHomeList() {
   const listEl = document.getElementById('hunts-home-list');
   listEl.innerHTML = loadingHTML('Loading hunts…');
 
+  let registryFolders = [];
   try {
     const venues = CURRENT_MANAGER.isAdmin
       ? await Store.allVenues()
       : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
-    const huntsPerVenue = await Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => [])));
+    const [huntsPerVenue, folders] = await Promise.all([
+      Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => []))),
+      Store.allFolders().catch(() => []),
+    ]);
     huntsHomeCache = venues.flatMap((v, i) => huntsPerVenue[i].map(h => ({ ...h, venueId: v.id, venueName: v.name })));
+    registryFolders = folders;
   } catch (err) {
     listEl.innerHTML = errorHTML('Could not load hunts', err);
     listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsHomeList);
     return;
   }
 
-  if (huntsHomeCache.length === 0) {
+  if (huntsHomeCache.length === 0 && registryFolders.length === 0 && !state.creatingFolder) {
     listEl.innerHTML = '';
     listEl.appendChild(emptyState(
       'map', 'No Hunts Yet',
@@ -914,20 +1061,24 @@ async function renderHuntsHomeList() {
   }
 
   const filtered = huntsHomeCache.filter(h => h.title.toLowerCase().includes(state.huntsHomeSearch.toLowerCase()));
-  if (filtered.length === 0) {
+  if (filtered.length === 0 && registryFolders.length === 0 && !state.creatingFolder) {
     listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No hunts match “${escapeHTML(state.huntsHomeSearch)}”.</div></div>`;
     return;
   }
 
-  // Group by folder (blank/missing -> "Uncategorized", always last). This is
-  // the whole "folder" feature — there's no separate Folder record, a group
-  // only exists because one or more hunts share that string in their
-  // `folder` field (see the Folder input in the hunt editor).
+  // Group by folder (blank/missing -> "Uncategorized", always last). A named
+  // group exists either because one or more hunts share that string in
+  // their `folder` field, or because it was explicitly registered via "Add
+  // Folder" (which is the only way an empty group — zero hunts — shows up
+  // at all; see config.js item 11).
   const groups = new Map();
   filtered.forEach((h) => {
     const key = (h.folder || '').trim();
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(h);
+  });
+  registryFolders.forEach((name) => {
+    if (!groups.has(name)) groups.set(name, []);
   });
   const folderKeys = [...groups.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
   if (groups.has('')) folderKeys.push('');
@@ -937,7 +1088,18 @@ async function renderHuntsHomeList() {
   // so collapsed folders go back to collapsed once the search is cleared.
   const searching = state.huntsHomeSearch.trim().length > 0;
 
-  listEl.innerHTML = folderKeys.map((key) => {
+  const creatingRowHTML = state.creatingFolder ? `
+    <div class="folder-group">
+      <div class="folder-header-creating">
+        ${icon('folder')}
+        <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
+        <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+        <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+      </div>
+    </div>
+  ` : '';
+
+  listEl.innerHTML = creatingRowHTML + folderKeys.map((key) => {
     const hunts = groups.get(key);
     const isUncategorized = key === '';
     const displayName = isUncategorized ? 'Uncategorized' : key;
@@ -951,20 +1113,40 @@ async function renderHuntsHomeList() {
           <span class="folder-chevron">${icon('chevronDown')}</span>
         </button>
         <div class="folder-hunts">
-          ${hunts.map(h => `
-            <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
-              <div class="hr-icon">${icon('map')}</div>
-              <div class="hr-body">
-                <div class="hr-title">${escapeHTML(h.title)}</div>
-                <div class="hr-sub">${escapeHTML(h.venueName)}</div>
-              </div>
-              ${icon('chevronRight')}
-            </div>
-          `).join('')}
+          ${hunts.length ? hunts.map(h => huntHomeRowHTML(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
         </div>
       </div>
     `;
   }).join('');
+
+  if (state.creatingFolder) {
+    const creatingEl = listEl.querySelector('.folder-header-creating');
+    const input = creatingEl.querySelector('.folder-new-input');
+    input.focus();
+    const cancel = () => { state.creatingFolder = false; renderHuntsHomeList(); };
+    const save = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      try {
+        await Store.addFolder(name);
+        state.creatingFolder = false;
+        showToast('checkCircle', 'Folder Added');
+        await renderHuntsHomeList();
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+      }
+    };
+    creatingEl.querySelector('.save').addEventListener('click', save);
+    creatingEl.querySelector('.cancel').addEventListener('click', cancel);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') save();
+      if (e.key === 'Escape') cancel();
+    });
+  }
 
   listEl.querySelectorAll('.folder-header').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -978,9 +1160,66 @@ async function renderHuntsHomeList() {
     });
   });
 
-  listEl.querySelectorAll('[data-hunt-home]').forEach(row => {
-    row.addEventListener('click', () => openEditor(row.dataset.huntHome, row.dataset.venue));
+  listEl.querySelectorAll('.hunt-row').forEach((row) => {
+    const huntId = row.dataset.huntHome;
+    const venueId = row.dataset.venue;
+    row.addEventListener('click', () => openEditor(huntId, venueId));
+
+    // Everything inside .hr-actions (the move button, and whatever it gets
+    // swapped for) needs clicks to stop here — otherwise they'd bubble up
+    // and also trigger the row's own navigate-to-editor listener above.
+    const actionsEl = row.querySelector('.hr-actions');
+    actionsEl.addEventListener('click', (e) => e.stopPropagation());
+    actionsEl.querySelector('.btn-move-folder').addEventListener('click', () => {
+      const hunt = huntsHomeCache.find(h => h.id === huntId);
+      if (hunt) openMoveFolderPicker(actionsEl, hunt);
+    });
   });
+}
+
+function huntHomeRowHTML(h) {
+  return `
+    <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
+      <div class="hr-icon">${icon('map')}</div>
+      <div class="hr-body">
+        <div class="hr-title">${escapeHTML(h.title)}</div>
+        <div class="hr-sub">${escapeHTML(h.venueName)}</div>
+      </div>
+      <div class="hr-actions">
+        <button class="btn-icon-sm btn-move-folder" type="button" title="Move to folder">${icon('folder')}</button>
+        ${icon('chevronRight')}
+      </div>
+    </div>
+  `;
+}
+
+function openMoveFolderPicker(actionsEl, hunt) {
+  (async () => {
+    let folders = [];
+    try {
+      folders = await Store.allFolders();
+    } catch (err) {
+      console.warn('Could not load folders:', err);
+    }
+    actionsEl.innerHTML = folderSelectHTML(folders, hunt.folder, 'folder-select folder-select-sm');
+    const select = actionsEl.querySelector('select');
+    select.focus();
+    wireFolderSelect(select, async (name) => {
+      if (name === null) { renderHuntsHomeList(); return; }
+      try {
+        await Store.setHuntFolder(hunt.id, hunt.recordChangeTag, name);
+        showToast('checkCircle', 'Hunt Moved');
+        await renderHuntsHomeList();
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Move Hunt',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+        renderHuntsHomeList();
+      }
+    });
+  })();
 }
 
 /* ---------------------------------------------------------------
@@ -1420,13 +1659,11 @@ async function openEditor(huntId, venueId) {
 
   const titleInput = document.getElementById('input-hunt-title');
   const descInput = document.getElementById('input-hunt-desc');
-  const folderInput = document.getElementById('input-hunt-folder');
   titleInput.value = state.draft.title;
   descInput.value = state.draft.description;
-  folderInput.value = state.draft.folder;
   titleInput.oninput = (e) => { state.draft.title = e.target.value; renderPreview(); syncCrumbTitle(); };
   descInput.oninput = (e) => { state.draft.description = e.target.value; };
-  folderInput.oninput = (e) => { state.draft.folder = e.target.value; };
+  renderHuntFolderField();
 
   const addBtn = document.getElementById('btn-add-clue');
   addBtn.innerHTML = `${icon('plusCircle')} Add Clue`;
@@ -1447,6 +1684,22 @@ async function openEditor(huntId, venueId) {
 
   renderClueList();
   renderPreview();
+}
+
+async function renderHuntFolderField() {
+  const wrap = document.getElementById('hunt-folder-field');
+  wrap.innerHTML = loadingHTML('Loading folders…');
+  let folders = [];
+  try {
+    folders = await Store.allFolders();
+  } catch (err) {
+    console.warn('Could not load folders:', err);
+  }
+  wrap.innerHTML = folderSelectHTML(folders, state.draft.folder, 'folder-select');
+  wireFolderSelect(wrap.querySelector('select'), (name) => {
+    if (name !== null) state.draft.folder = name;
+    renderHuntFolderField();
+  });
 }
 
 function syncCrumbTitle() {

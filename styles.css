@@ -545,6 +545,42 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .folder-group.collapsed .folder-chevron { transform: rotate(-90deg); }
 .folder-group.collapsed .folder-hunts { display: none; }
 
+.folder-empty-hint {
+  font-size: 13px; color: var(--text-tertiary); font-style: italic;
+  padding: 10px 6px;
+}
+
+/* Inline "new folder name" row shown by the Add Folder button — same
+   shape as .folder-header so it slots in above the other groups. */
+.folder-header-creating {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 6px; margin-bottom: 8px;
+}
+.folder-header-creating .icon { width: 16px; height: 16px; color: var(--text-tertiary); flex: none; }
+.folder-header-creating .name-edit-input { flex: 1; max-width: 280px; }
+
+.hr-actions { flex: none; display: flex; align-items: center; gap: 10px; }
+
+/* Reuses .venue-picker's look (custom chevron, appearance:none) for the
+   Folder field in the hunt editor and the per-row "move to folder" picker. */
+.folder-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 100%;
+  font: inherit; font-size: 14.5px; color: var(--text-primary);
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  background-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 30px 10px 12px;
+  cursor: pointer;
+}
+.folder-select:focus { border-color: var(--accent); outline: none; }
+.folder-select-sm {
+  width: auto; max-width: 150px;
+  font-size: 12.5px; padding: 6px 26px 6px 10px; border-radius: 8px;
+}
+
 /* ---- Users page (admin) ---- */
 
 .user-card {

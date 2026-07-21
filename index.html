@@ -14,7 +14,7 @@
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="stylesheet" href="styles.css?v=20260719t" />
+<link rel="stylesheet" href="styles.css?v=20260720a" />
 </head>
 <body>
 <div id="app">
@@ -81,6 +81,7 @@
               <h1 class="section-title">All Hunts</h1>
               <div class="section-actions">
                 <div class="search-box glass" id="hunts-home-search-box"></div>
+                <button class="btn btn-glass" id="btn-add-folder"></button>
               </div>
             </div>
             <div id="hunts-home-list"></div>
@@ -152,8 +153,8 @@
                     <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
                   </div>
                   <div class="field" style="margin-bottom:0;">
-                    <label class="label" for="input-hunt-folder">Folder <span class="label-optional">(optional)</span></label>
-                    <input type="text" id="input-hunt-folder" placeholder="e.g. Natural History" />
+                    <label class="label">Folder <span class="label-optional">(optional)</span></label>
+                    <div id="hunt-folder-field"></div>
                   </div>
                 </div>
 
@@ -219,8 +220,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260719t"></script>
-<script src="icons.js?v=20260719t"></script>
-<script src="app.js?v=20260719t"></script>
+<script src="config.js?v=20260720a"></script>
+<script src="icons.js?v=20260720a"></script>
+<script src="app.js?v=20260720a"></script>
 </body>
 </html>
