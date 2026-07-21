@@ -539,6 +539,42 @@ function restrictedStateHTML(message) {
 }
 
 /* ---------------------------------------------------------------
+   Appearance / layout preferences — per-browser, not per-account, so
+   these live in localStorage rather than CloudKit. Every signed-in
+   person can change these for themselves regardless of role (see
+   Settings view below).
+------------------------------------------------------------------ */
+
+const THEME_KEY = 'museTheme';
+const SIDEBAR_COLLAPSED_KEY = 'museSidebarCollapsed';
+
+function getStoredTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  return (t === 'light' || t === 'dark') ? t : 'system';
+}
+function applyTheme(value) {
+  if (value === 'light' || value === 'dark') {
+    document.documentElement.dataset.theme = value;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  localStorage.setItem(THEME_KEY, value);
+}
+
+function getSidebarCollapsed() {
+  return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+function applySidebarCollapsed(collapsed) {
+  document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+}
+
+// Applied immediately at load (not gated behind sign-in) so the sidebar is
+// already in the right state the moment it becomes visible, rather than
+// flashing expanded-then-collapsed right after signing in.
+applySidebarCollapsed(getSidebarCollapsed());
+
+/* ---------------------------------------------------------------
    Sidebar (nav + account menu) / page header (breadcrumbs)
 ------------------------------------------------------------------ */
 
@@ -554,25 +590,29 @@ function renderSidebar() {
   const navHuntsHome = document.getElementById('nav-hunts-home');
   const navUsers = document.getElementById('nav-users');
   const navSettings = document.getElementById('nav-settings');
-  navVenues.innerHTML = `${icon('building')} Venues`;
+  navVenues.title = 'Venues';
+  navVenues.innerHTML = `${icon('building')} <span class="nav-label">Venues</span>`;
   navVenues.addEventListener('click', goToVenues);
-  navHuntsHome.innerHTML = `${icon('map')} Hunts`;
+  navHuntsHome.title = 'Hunts';
+  navHuntsHome.innerHTML = `${icon('map')} <span class="nav-label">Hunts</span>`;
   navHuntsHome.addEventListener('click', goToHuntsHome);
-  navUsers.innerHTML = `${icon('person')} Users`;
+  navUsers.title = 'Users';
+  navUsers.innerHTML = `${icon('person')} <span class="nav-label">Users</span>`;
   navUsers.addEventListener('click', goToUsers);
-  navSettings.innerHTML = `${icon('gear')} Settings`;
+  navSettings.title = 'Settings';
+  navSettings.innerHTML = `${icon('gear')} <span class="nav-label">Settings</span>`;
   navSettings.addEventListener('click', goToSettings);
 
   const el = document.getElementById('sidebar-account');
   el.innerHTML = `
     <div class="account-menu-wrap">
-      <button class="account-btn" id="account-btn">
+      <button class="account-btn" id="account-btn" title="${escapeAttr(CURRENT_MANAGER.name)}">
         <span class="avatar">${icon('person')}</span>
         <span class="account-meta">
           <span class="account-name">${escapeHTML(CURRENT_MANAGER.name)}</span>
           <span class="account-role">${CURRENT_MANAGER.isAdmin ? 'Administrator' : 'Manager'}</span>
         </span>
-        ${icon('chevronDown')}
+        <span class="account-chevron">${icon('chevronDown')}</span>
       </button>
       <div class="account-dropdown glass-strong" id="account-dropdown">
         <div class="who">
@@ -1145,6 +1185,9 @@ function confirmUnassignManager(user, venueId, venues) {
    Settings view (administrators only)
 ------------------------------------------------------------------ */
 
+// Appearance/layout preferences only — personal to whoever's browser it is,
+// not CloudKit config, so every signed-in person can use this regardless
+// of role (unlike Users, which stays administrator-only).
 async function goToSettings() {
   state.venueId = null;
   state.huntId = null;
@@ -1152,28 +1195,44 @@ async function goToSettings() {
   showView('settings');
 
   const el = document.getElementById('settings-body');
-  if (!CURRENT_MANAGER.isAdmin) {
-    el.innerHTML = restrictedStateHTML('You need administrator access to view console settings.');
-    return;
-  }
+  const theme = getStoredTheme();
+  const collapsed = getSidebarCollapsed();
 
   el.innerHTML = `
     <div class="panel glass" style="max-width:480px;">
-      <p class="panel-title">Console</p>
+      <p class="panel-title">Appearance</p>
       <div class="field">
-        <label class="label">CloudKit Container</label>
-        <div class="settings-value">${escapeHTML(CLOUDKIT_CONFIG.containerIdentifier)}</div>
+        <label class="label">Theme</label>
+        <div class="segmented-control" id="theme-control">
+          <button type="button" data-value="light" class="${theme === 'light' ? 'active' : ''}">Light</button>
+          <button type="button" data-value="dark" class="${theme === 'dark' ? 'active' : ''}">Dark</button>
+          <button type="button" data-value="system" class="${theme === 'system' ? 'active' : ''}">System</button>
+        </div>
       </div>
-      <div class="field">
-        <label class="label">Environment</label>
-        <div class="settings-value">${escapeHTML(CLOUDKIT_CONFIG.environment)}</div>
-      </div>
-      <div class="field" style="margin-bottom:0;">
-        <label class="label">Tag Request Email</label>
-        <div class="settings-value">${escapeHTML(TAG_REQUEST_EMAIL)}</div>
+      <div class="field settings-toggle-row" style="margin-bottom:0;">
+        <div>
+          <label class="label" style="margin-bottom:2px;">Collapse Sidebar</label>
+          <div class="settings-desc">Show icons only, to save horizontal space.</div>
+        </div>
+        <button class="toggle-switch ${collapsed ? 'on' : ''}" id="sidebar-collapse-toggle" type="button" role="switch" aria-checked="${collapsed}"></button>
       </div>
     </div>
   `;
+
+  el.querySelectorAll('#theme-control button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyTheme(btn.dataset.value);
+      el.querySelectorAll('#theme-control button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  const sidebarToggle = document.getElementById('sidebar-collapse-toggle');
+  sidebarToggle.addEventListener('click', () => {
+    const next = !getSidebarCollapsed();
+    applySidebarCollapsed(next);
+    sidebarToggle.classList.toggle('on', next);
+    sidebarToggle.setAttribute('aria-checked', String(next));
+  });
 }
 
 /* ---------------------------------------------------------------

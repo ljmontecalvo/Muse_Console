@@ -4,7 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
-<link rel="stylesheet" href="styles.css?v=20260719r" />
+<script>
+  // Applied before the stylesheet paints anything, so a saved Light/Dark
+  // preference doesn't flash the wrong theme for a frame. "System" (no
+  // stored value, or the value "system") deliberately sets nothing here —
+  // the CSS's own prefers-color-scheme media query already handles that.
+  (function () {
+    var t = localStorage.getItem('museTheme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="stylesheet" href="styles.css?v=20260719s" />
 </head>
 <body>
 <div id="app">
@@ -111,7 +121,7 @@
           </div>
         </section>
 
-        <!-- ============ SETTINGS (administrators only) ============ -->
+        <!-- ============ SETTINGS (appearance/layout — everyone) ============ -->
         <section id="view-settings" class="view">
           <div class="content">
             <div class="section-head">
@@ -205,8 +215,8 @@
      at the edge, and without a version bump some visitors will keep getting
      a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260719r"></script>
-<script src="icons.js?v=20260719r"></script>
-<script src="app.js?v=20260719r"></script>
+<script src="config.js?v=20260719s"></script>
+<script src="icons.js?v=20260719s"></script>
+<script src="app.js?v=20260719s"></script>
 </body>
 </html>

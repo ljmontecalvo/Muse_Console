@@ -233,6 +233,24 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   padding: 14px 12px;
+  transition: width 0.15s ease;
+}
+
+/* Collapsed sidebar is a desktop-only concept — on the mobile layout below,
+   the sidebar becomes a horizontal top bar and always shows full labels,
+   so this is scoped out of that breakpoint entirely rather than competing
+   with it on specificity. */
+@media (min-width: 861px) {
+  .sidebar.collapsed { width: 64px; }
+  .sidebar.collapsed .sidebar-brand { justify-content: center; padding: 8px; }
+  .sidebar.collapsed .nav-item { justify-content: center; }
+  .sidebar.collapsed .sidebar-account .account-btn { justify-content: center; }
+  .sidebar.collapsed .sidebar-brand span:not(.mark),
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .account-meta,
+  .sidebar.collapsed .account-chevron {
+    display: none;
+  }
 }
 
 .sidebar-brand {
@@ -580,14 +598,45 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .field { margin-bottom: 14px; }
 .field:last-child { margin-bottom: 0; }
-.settings-value {
-  font-size: 14.5px;
-  padding: 10px 12px;
-  background: var(--surface-hover);
-  border-radius: 8px;
-  word-break: break-all;
-}
 textarea.hunt-desc { min-height: 64px; }
+
+/* ---- Settings: appearance / layout ---- */
+
+.segmented-control {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.segmented-control button {
+  font: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: none; border-right: 1px solid var(--border);
+  padding: 8px 18px; cursor: pointer;
+}
+.segmented-control button:last-child { border-right: none; }
+.segmented-control button:hover:not(.active) { background: var(--surface-hover); }
+.segmented-control button.active { background: var(--accent); color: #fff; }
+
+.settings-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-desc { font-size: 12.5px; color: var(--text-tertiary); }
+
+.toggle-switch {
+  width: 42px; height: 25px; border-radius: 999px; flex: none;
+  background: var(--surface-hover); border: 1px solid var(--border);
+  position: relative; cursor: pointer; padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 19px; height: 19px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+.toggle-switch.on { background: var(--accent); border-color: var(--accent); }
+.toggle-switch.on::after { transform: translateX(17px); }
 
 .clue-list { display: flex; flex-direction: column; gap: 10px; }
 
