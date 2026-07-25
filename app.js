@@ -1,27 +1,3 @@
-/* ---------------------------------------------------------------
-   Muse Console — app logic
-
-   Two data layers behind one interface (`Store`):
-   - MockStore: in-memory sample data, used whenever config.js has no
-     apiToken configured (or the CloudKit script failed to load) so
-     the UI is still fully clickable without touching production.
-   - CloudKitStore: real CloudKit JS calls against the public database,
-     used once CLOUDKIT_CONFIG.apiToken is set.
-
-   CloudKit JS reference: https://developer.apple.com/documentation/cloudkitjs
-   The CloudKitStore methods below are written against the documented
-   v2 API (CloudKit.configure / performQuery / saveRecords / deleteRecords /
-   setUpAuth / whenUserSignsIn) but have NOT been exercised against a
-   live container from here — there's no way for me to do that without
-   your real API token. Test read access (sign in, load venues) before
-   trusting the write paths (save/delete), and watch the browser console
-   for CloudKit's own error payloads if something doesn't match.
-
-   SCHEMA REQUIREMENT: Venue needs a `managers` field (List<String> of
-   CloudKit userRecordNames) for the venuesForManager query below to
-   work — see config.js for the full Dashboard checklist.
------------------------------------------------------------------- */
-
 const USE_MOCK = typeof CloudKit === 'undefined' || !CLOUDKIT_CONFIG.apiToken;
 
 let container = null;
@@ -41,10 +17,6 @@ if (!USE_MOCK) {
 
 const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: false, hasRealName: false };
 
-/* ---------------------------------------------------------------
-   Mock data store (demo mode)
------------------------------------------------------------------- */
-
 const MockStore = (() => {
   let venues = [
     { id: 'venue_1', name: 'Riverside Natural History Museum', address: '400 Riverside Dr, Springfield', managers: ['mock_manager'] },
@@ -52,9 +24,9 @@ const MockStore = (() => {
     { id: 'venue_3', name: 'Harbor Maritime Museum', address: '88 Wharf Rd, Bayport', managers: ['someone_else'] },
   ];
   let hunts = [
-    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.' },
-    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.' },
-    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.' },
+    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History' },
+    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History' },
+    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '' },
   ];
   let clues = [
     { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'K7$Q2M9!XB4@RT8&WZ3P', tagStatus: 'installed' },
@@ -67,10 +39,8 @@ const MockStore = (() => {
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
 
-  // The signed-in demo identity is the site owner, so it's an administrator
-  // by default — a good way to exercise the admin views in demo mode. Note
-  // venue_3 above is managed by "someone_else", not mock_manager, which is
-  // exactly the case that shows off admin bypassing the normal manager filter.
+  let folderRegistry = {};
+
   let appUsers = [
     { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com', isAdmin: true },
     { userRecordName: 'someone_else', name: 'Jordan Reyes', email: 'jordan.reyes@example.com', isAdmin: false },
@@ -96,6 +66,10 @@ const MockStore = (() => {
     },
     async allUsers() {
       return appUsers.map(u => ({ ...u }));
+    },
+    async getDirectoryEntry(userRecordName) {
+      const u = appUsers.find(x => x.userRecordName === userRecordName);
+      return u ? { name: u.name, email: u.email } : null;
     },
     async allVenues() {
       return venues.map(v => ({ ...v }));
@@ -143,19 +117,26 @@ const MockStore = (() => {
       hunts = hunts.filter(h => h.id !== huntId);
       clues = clues.filter(c => c.huntId !== huntId);
     },
+    async allFolders(venueId) {
+      const fromHunts = hunts.filter(h => h.venueId === venueId).map(h => (h.folder || '').trim()).filter(Boolean);
+      const registered = folderRegistry[venueId] || [];
+      return [...new Set([...registered, ...fromHunts])].sort((a, b) => a.localeCompare(b));
+    },
+    async addFolder(venueId, name) {
+      const trimmed = (name || '').trim();
+      if (!trimmed) return;
+      const list = folderRegistry[venueId] || (folderRegistry[venueId] = []);
+      if (!list.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
+        list.push(trimmed);
+      }
+    },
+    async setHuntFolder(huntId, recordChangeTag, folder) {
+      const h = hunts.find(x => x.id === huntId);
+      if (h) h.folder = folder || '';
+    },
   };
 })();
 
-/* ---------------------------------------------------------------
-   CloudKit data store (live mode)
------------------------------------------------------------------- */
-
-// Two different reference shapes: query filters want a bare { recordName }
-// (an extra `action` key here can keep the filter from matching anything —
-// this was silently returning zero rows for `venueReference == %@` queries
-// rather than throwing, which is what made "no hunts" look like an empty
-// venue instead of a broken filter). Saved record fields need `action` set
-// (CloudKit requires it on any reference field being written).
 function ckRefQuery(recordName) {
   return { recordName };
 }
@@ -163,10 +144,17 @@ function ckRefSave(recordName) {
   return { recordName, action: 'NONE' };
 }
 
+function folderRegistryRecordName(venueId) {
+  return 'folder_registry_' + venueId;
+}
+
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
+    console.warn('CloudKit request had errors:', response.errors);
     const first = response.errors && response.errors[0];
-    throw new Error((first && (first.reason || first.serverErrorCode)) || 'CloudKit request failed');
+    const reason = (first && (first.reason || first.serverErrorCode)) || 'CloudKit request failed';
+    const suffix = response.errors && response.errors.length > 1 ? ` (+${response.errors.length - 1} more)` : '';
+    throw new Error(reason + suffix);
   }
 }
 
@@ -185,6 +173,7 @@ function recordToHunt(r) {
     recordChangeTag: r.recordChangeTag,
     title: r.fields.title && r.fields.title.value,
     description: r.fields.description && r.fields.description.value,
+    folder: (r.fields.folder && r.fields.folder.value) || '',
     venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
   };
 }
@@ -196,21 +185,13 @@ function recordToClue(r) {
     title: r.fields.title && r.fields.title.value,
     body: r.fields.body && r.fields.body.value,
     nfcTagID: r.fields.nfcTagID && r.fields.nfcTagID.value,
-    // Clue records saved before the tagStatus field existed won't have it —
-    // treat those as "pending" rather than crashing or showing a blank status.
     tagStatus: (r.fields.tagStatus && r.fields.tagStatus.value) || 'pending',
     huntId: r.fields.huntReference && r.fields.huntReference.value && r.fields.huntReference.value.recordName,
   };
 }
 
 const CloudKitStore = {
-  // Auth (setUpAuth / whenUserSignsIn) is wired directly in the "Sign in / out"
-  // section below, not here — see the note there for why.
 
-  // Fails closed (returns false) on any error, including "field doesn't
-  // exist" or a permissions problem reading the Users type's custom field —
-  // an admin-check that can't be confirmed should never silently grant
-  // access. See config.js item 8 if this always comes back false.
   async checkIsAdmin(userRecordName) {
     try {
       const response = await publicDB.fetchRecords(userRecordName);
@@ -224,28 +205,6 @@ const CloudKitStore = {
     }
   },
 
-  // Upserts this person's directory entry. operationType: 'forceUpdate' was
-  // supposed to mean "create if missing, update if present, no changeTag
-  // needed" per Apple's docs, but in practice against this container it
-  // still hits "record to insert already exists" once the record is real —
-  // same failure signature as the original Hunt/Clue save bug. Rather than
-  // trust that operationType's documented behavior a second time, fetch
-  // first and explicitly choose create vs. update, exactly like
-  // saveHunt/assignManager already do reliably.
-  //
-  // The AppUser record's OWN recordName can't just be the person's
-  // userRecordName — recordName is unique across the whole database, not
-  // per record type, and that name is already taken by their built-in
-  // Users record ("invalid attempt to update record from type 'Users' to
-  // 'AppUser'"). Prefixing it keeps the lookup deterministic while
-  // guaranteeing no collision with the reserved type.
-  //
-  // hasRealName distinguishes an Apple-shared name from our own locally
-  // computed placeholder (see identityToManager) — only a real name is
-  // written here, and 'update' only touches the fields it includes, so
-  // omitting `name` entirely leaves whatever's already stored untouched.
-  // Without this, every sign-in with no real name from Apple would
-  // silently overwrite a name an admin had manually set on the Users page.
   async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
     const recordName = 'appuser_' + userRecordName;
     let existing = null;
@@ -276,10 +235,20 @@ const CloudKitStore = {
     }));
   },
 
-  // No filterBy — an admin needs every venue regardless of who manages it.
-  // Unverified against a live container like everything else here: if this
-  // errors, CloudKit may require an explicit filter even for "all records
-  // of this type" queries.
+  async getDirectoryEntry(userRecordName) {
+    const response = await publicDB.fetchRecords('appuser_' + userRecordName);
+    if (response.hasErrors) {
+      console.warn('getDirectoryEntry fetch had errors:', response.errors);
+      return null;
+    }
+    if (!response.records || !response.records[0]) return null;
+    const rec = response.records[0];
+    return {
+      name: rec.fields.name && rec.fields.name.value,
+      email: rec.fields.email && rec.fields.email.value,
+    };
+  },
+
   async allVenues() {
     const response = await publicDB.performQuery({ recordType: 'Venue' });
     assertNoErrors(response);
@@ -363,19 +332,15 @@ const CloudKitStore = {
   },
 
   async saveHunt(huntId, venueId, data, clueList, originalClueIds, huntChangeTag) {
-    // CloudKit requires recordChangeTag + operationType: 'update' to modify an
-    // existing record — without them it's treated as a create, which fails
-    // with "record to insert already exists" for anything that already has
-    // a recordName. Creates (no recordName yet) don't need either.
     const huntRecord = huntId
       ? {
           recordName: huntId,
           recordChangeTag: huntChangeTag,
           operationType: 'update',
           recordType: 'Hunt',
-          fields: { title: { value: data.title }, description: { value: data.description } },
+          fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' } },
         }
-      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, venueReference: { value: ckRefSave(venueId) } } };
+      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' }, venueReference: { value: ckRefSave(venueId) } } };
 
     const huntResp = await publicDB.saveRecords([huntRecord]);
     assertNoErrors(huntResp);
@@ -416,6 +381,43 @@ const CloudKitStore = {
     if (clues.length) assertNoErrors(await publicDB.deleteRecords(clues.map(c => c.id)));
     assertNoErrors(await publicDB.deleteRecords([huntId]));
   },
+
+  async allFolders(venueId) {
+    const [registryResp, hunts] = await Promise.all([
+      publicDB.fetchRecords(folderRegistryRecordName(venueId)),
+      this.huntsForVenue(venueId),
+    ]);
+    const registryRec = !registryResp.hasErrors && registryResp.records && registryResp.records[0];
+    const registryNames = (registryRec && registryRec.fields.names && registryRec.fields.names.value) || [];
+    const huntFolders = hunts.map(h => (h.folder || '').trim()).filter(Boolean);
+    return [...new Set([...registryNames, ...huntFolders])].sort((a, b) => a.localeCompare(b));
+  },
+
+  async addFolder(venueId, name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const recordName = folderRegistryRecordName(venueId);
+    const fetchResp = await publicDB.fetchRecords(recordName);
+    const existing = (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) || null;
+    const current = (existing && existing.fields.names && existing.fields.names.value) || [];
+    if (current.some(f => f.toLowerCase() === trimmed.toLowerCase())) return;
+    const updated = [...current, trimmed];
+    const record = existing
+      ? { recordName, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'FolderRegistry', fields: { names: { value: updated } } }
+      : { recordName, recordType: 'FolderRegistry', fields: { names: { value: updated } } };
+    assertNoErrors(await publicDB.saveRecords([record]));
+  },
+
+  async setHuntFolder(huntId, recordChangeTag, folder) {
+    const response = await publicDB.saveRecords([{
+      recordName: huntId,
+      recordChangeTag,
+      operationType: 'update',
+      recordType: 'Hunt',
+      fields: { folder: { value: folder || '' } },
+    }]);
+    assertNoErrors(response);
+  },
 };
 
 function identityToManager(identity) {
@@ -423,12 +425,6 @@ function identityToManager(identity) {
     ? [identity.nameComponents.givenName, identity.nameComponents.familyName].filter(Boolean)
     : [];
   const email = (identity.lookupInfo && identity.lookupInfo.emailAddress) || '';
-  // Apple only sends a real name/email here if the API token was created
-  // with "Request user discoverability at sign in" AND the person consents
-  // to sharing when prompted — neither is guaranteed, so this commonly
-  // comes back empty. Fall back to something distinguishable rather than
-  // a flat "Manager" for every unnamed person; an admin can always set a
-  // real name afterward from the Users page (pencil icon next to a name).
   const fallbackName = email ? email.split('@')[0] : `User ${identity.userRecordName.slice(-6)}`;
   return {
     userRecordName: identity.userRecordName,
@@ -440,15 +436,11 @@ function identityToManager(identity) {
 
 const Store = USE_MOCK ? MockStore : CloudKitStore;
 
-/* ---------------------------------------------------------------
-   App state
------------------------------------------------------------------- */
-
 const state = {
   venueId: null,
   huntId: null,
   isNewHunt: false,
-  draft: { title: '', description: '', clues: [] },
+  draft: { title: '', description: '', folder: '', clues: [] },
   originalClueIds: new Set(),
   huntChangeTag: null,
   expandedClueId: null,
@@ -456,26 +448,24 @@ const state = {
   huntSearch: '',
   userSearch: '',
   showUserIds: false,
-  userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
+  userFilter: 'all',
+  huntsHomeSearch: '',
+  collapsedHuntFolders: new Set(),
+  creatingFolderVenueId: null,
+  huntsHomeVenueFilter: '',
 };
 
 let draftClueSeq = 1;
 const draftClueId = () => `draft_${draftClueSeq++}`;
 
-/* ---------------------------------------------------------------
-   View switching
------------------------------------------------------------------- */
-
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${name}`).classList.add('active');
+  document.getElementById('app-shell').style.display = name === 'signin' ? 'none' : 'flex';
+  if (name !== 'signin') setActiveNav(name);
   closeAccountMenus();
   window.scrollTo({ top: 0 });
 }
-
-/* ---------------------------------------------------------------
-   Loading / error helpers
------------------------------------------------------------------- */
 
 function loadingHTML(label) {
   return `<div class="loading-state"><div class="spinner"></div><div>${escapeHTML(label)}</div></div>`;
@@ -491,63 +481,86 @@ function errorHTML(title, err, retryLabel) {
   </div>`;
 }
 
-/* ---------------------------------------------------------------
-   Topbar / breadcrumbs / account menu
------------------------------------------------------------------- */
+function restrictedStateHTML(message) {
+  return `<div class="empty-state">
+    ${icon('lock')}
+    <div class="es-title">Restricted</div>
+    <div class="es-desc">${escapeHTML(message)}</div>
+  </div>`;
+}
 
-function renderTopbar(containerId, crumbs) {
-  const el = document.getElementById(containerId);
-  const crumbsHTML = crumbs.map((c, i) => {
-    const isLast = i === crumbs.length - 1;
-    const sep = i > 0 ? `<span class="sep">${icon('chevronRight')}</span>` : '';
-    if (isLast) return `${sep}<span class="crumb-current">${c.label}</span>`;
-    return `${sep}<span class="crumb-link" data-crumb="${i}">${c.label}</span>`;
-  }).join('');
+const THEME_KEY = 'museTheme';
+const SIDEBAR_COLLAPSED_KEY = 'museSidebarCollapsed';
 
+function getStoredTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  return (t === 'light' || t === 'dark') ? t : 'system';
+}
+function applyTheme(value) {
+  if (value === 'light' || value === 'dark') {
+    document.documentElement.dataset.theme = value;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  localStorage.setItem(THEME_KEY, value);
+}
+
+function getSidebarCollapsed() {
+  return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+function applySidebarCollapsed(collapsed) {
+  document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+}
+
+applySidebarCollapsed(getSidebarCollapsed());
+
+function renderSidebar() {
+  const navVenues = document.getElementById('nav-venues');
+  const navHuntsHome = document.getElementById('nav-hunts-home');
+  const navUsers = document.getElementById('nav-users');
+  const navSettings = document.getElementById('nav-settings');
+  navVenues.title = 'Venues';
+  navVenues.innerHTML = `${icon('building')} <span class="nav-label">Venues</span>`;
+  navVenues.addEventListener('click', goToVenues);
+  navHuntsHome.title = 'Hunts';
+  navHuntsHome.innerHTML = `${icon('map')} <span class="nav-label">Hunts</span>`;
+  navHuntsHome.addEventListener('click', goToHuntsHome);
+  navUsers.title = 'Users';
+  navUsers.innerHTML = `${icon('person')} <span class="nav-label">Users</span>`;
+  navUsers.addEventListener('click', goToUsers);
+  navSettings.title = 'Settings';
+  navSettings.innerHTML = `${icon('gear')} <span class="nav-label">Settings</span>`;
+  navSettings.addEventListener('click', goToSettings);
+
+  const el = document.getElementById('sidebar-account');
   el.innerHTML = `
-    <div class="crumbs">
-      <span class="brand" style="margin-right:6px;">
-        <span class="mark">M</span><span>Muse Console</span>
-      </span>
-      ${crumbs.length ? `<span class="sep">${icon('chevronRight')}</span>` : ''}
-      ${crumbsHTML}
-    </div>
-    <div class="account">
-      <div class="account-menu-wrap">
-        <button class="account-btn" id="account-btn">
+    <div class="account-menu-wrap">
+      <button class="account-btn" id="account-btn" title="${escapeAttr(CURRENT_MANAGER.name)}">
+        <span class="avatar">${icon('person')}</span>
+        <span class="account-meta">
           <span class="account-name">${escapeHTML(CURRENT_MANAGER.name)}</span>
-          ${CURRENT_MANAGER.isAdmin ? adminBadgeHTML() : ''}
-          <span class="avatar">${icon('person')}</span>
-        </button>
-        <div class="account-dropdown glass-strong" id="account-dropdown">
-          <div class="who">
-            <div class="n">${escapeHTML(CURRENT_MANAGER.name)}</div>
-            <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
-          </div>
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="menu-venues">${icon('building')} All Venues</button>
-          ${CURRENT_MANAGER.isAdmin ? `<button class="dropdown-item" id="menu-users">${icon('person')} Manage Users</button>` : ''}
-          <div class="dropdown-divider"></div>
-          <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
+          <span class="account-role">${CURRENT_MANAGER.isAdmin ? 'Administrator' : 'Manager'}</span>
+        </span>
+        <span class="account-chevron">${icon('chevronDown')}</span>
+      </button>
+      <div class="account-dropdown glass-strong" id="account-dropdown">
+        <div class="who">
+          <div class="n">${escapeHTML(CURRENT_MANAGER.name)}</div>
+          <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
         </div>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
+        <div class="dropdown-divider"></div>
+        <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
       </div>
     </div>
   `;
-
-  crumbs.forEach((c, i) => {
-    if (i === crumbs.length - 1) return;
-    el.querySelector(`[data-crumb="${i}"]`).addEventListener('click', c.onClick);
-  });
 
   el.querySelector('#account-btn').addEventListener('click', (e) => {
     e.stopPropagation();
     el.querySelector('#account-dropdown').classList.toggle('open');
   });
-  el.querySelector('#menu-venues').addEventListener('click', () => { closeAccountMenus(); goToVenues(); });
-  const menuUsers = el.querySelector('#menu-users');
-  if (menuUsers) menuUsers.addEventListener('click', () => { closeAccountMenus(); goToUsers(); });
   el.querySelector('#menu-signout').addEventListener('click', () => { closeAccountMenus(); signOut(); });
   el.querySelector('#menu-copy-id').addEventListener('click', async () => {
     closeAccountMenus();
@@ -560,14 +573,42 @@ function renderTopbar(containerId, crumbs) {
   });
 }
 
+function setActiveNav(view) {
+  const section = (view === 'hunts' || view === 'editor') ? 'venues' : view;
+  ['venues', 'hunts-home', 'users', 'settings'].forEach((id) => {
+    const el = document.getElementById(`nav-${id}`);
+    if (el) el.classList.toggle('active', id === section);
+  });
+}
+
+function renderPageHeader(crumbs) {
+  const el = document.getElementById('page-header');
+  if (!crumbs.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'flex';
+
+  const crumbsHTML = crumbs.map((c, i) => {
+    const isLast = i === crumbs.length - 1;
+    const sep = i > 0 ? `<span class="sep">${icon('chevronRight')}</span>` : '';
+    if (isLast) return `${sep}<span class="crumb-current">${c.label}</span>`;
+    return `${sep}<span class="crumb-link" data-crumb="${i}">${c.label}</span>`;
+  }).join('');
+
+  el.innerHTML = `<div class="crumbs">${crumbsHTML}</div>`;
+
+  crumbs.forEach((c, i) => {
+    if (i === crumbs.length - 1) return;
+    el.querySelector(`[data-crumb="${i}"]`).addEventListener('click', c.onClick);
+  });
+}
+
 function closeAccountMenus() {
   document.querySelectorAll('.account-dropdown').forEach(d => d.classList.remove('open'));
 }
 document.addEventListener('click', closeAccountMenus);
-
-/* ---------------------------------------------------------------
-   Search box helper
------------------------------------------------------------------- */
 
 function renderSearchBox(containerId, placeholder, value, onInput) {
   const el = document.getElementById(containerId);
@@ -575,14 +616,10 @@ function renderSearchBox(containerId, placeholder, value, onInput) {
   el.querySelector('input').addEventListener('input', (e) => onInput(e.target.value));
 }
 
-/* ---------------------------------------------------------------
-   Venues view
------------------------------------------------------------------- */
-
 async function goToVenues() {
   state.venueId = null;
   state.huntId = null;
-  renderTopbar('topbar-venues', []);
+  renderPageHeader([]);
   renderSearchBox('venue-search-box', 'Search venues', state.venueSearch, (v) => {
     state.venueSearch = v;
     renderVenuesGrid();
@@ -593,10 +630,6 @@ async function goToVenues() {
     ? `All Venues ${adminBadgeHTML()}`
     : 'Your Venues';
 
-  // Venue creation is admin-only — the Venue record type's Write role in
-  // CloudKit is restricted to the Muse Administrators role (see config.js),
-  // so a non-admin's create would fail server-side anyway; hiding the
-  // button just keeps the UI honest about that.
   const newVenueBtn = document.getElementById('btn-new-venue');
   newVenueBtn.style.display = CURRENT_MANAGER.isAdmin ? '' : 'none';
   newVenueBtn.innerHTML = `${icon('plus')} Add Venue`;
@@ -728,14 +761,355 @@ function emptyState(iconName, title, desc) {
   return div;
 }
 
-/* ---------------------------------------------------------------
-   Users view (administrators only)
------------------------------------------------------------------- */
+const ADD_NEW_FOLDER_VALUE = '__add_new_folder__';
+
+function folderSelectHTML(folders, selectedValue, extraClass) {
+  return `
+    <select class="${extraClass || ''}">
+      <option value="" ${!selectedValue ? 'selected' : ''}>No Folder</option>
+      ${folders.map(f => `<option value="${escapeAttr(f)}" ${f === selectedValue ? 'selected' : ''}>${escapeHTML(f)}</option>`).join('')}
+      <option value="${ADD_NEW_FOLDER_VALUE}">+ Add New Folder…</option>
+    </select>
+  `;
+}
+
+function wireFolderSelect(selectEl, venueId, onChoose) {
+  selectEl.addEventListener('change', async () => {
+    if (selectEl.value !== ADD_NEW_FOLDER_VALUE) {
+      onChoose(selectEl.value);
+      return;
+    }
+    const wrap = selectEl.parentElement;
+    wrap.innerHTML = `
+      <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
+      <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+      <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+    `;
+    const input = wrap.querySelector('.folder-new-input');
+    input.focus();
+    wrap.querySelector('.cancel').addEventListener('click', () => onChoose(null));
+    const confirm = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      try {
+        await Store.addFolder(venueId, name);
+        onChoose(name);
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+      }
+    };
+    wrap.querySelector('.save').addEventListener('click', confirm);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirm();
+      if (e.key === 'Escape') onChoose(null);
+    });
+  });
+}
+
+async function goToHuntsHome() {
+  state.venueId = null;
+  state.huntId = null;
+  state.creatingFolderVenueId = null;
+  state.huntsHomeVenueFilter = '';
+
+  if (!CURRENT_MANAGER.isAdmin) {
+    try {
+      const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+      if (venues.length === 1) {
+        venuesCache = venues;
+        await goToHunts(venues[0].id);
+        return;
+      }
+    } catch (err) {
+      console.warn('Could not check venue count for the Hunts nav, falling back to the full list:', err);
+    }
+  }
+
+  renderPageHeader([]);
+  renderSearchBox('hunts-home-search-box', 'Search hunts', state.huntsHomeSearch, (v) => {
+    state.huntsHomeSearch = v;
+    renderHuntsHomeList();
+  });
+
+  showView('hunts-home');
+  await renderHuntsHomeList();
+}
+
+let huntsHomeCache = [];
+
+async function renderHuntsHomeList() {
+  const listEl = document.getElementById('hunts-home-list');
+  listEl.innerHTML = loadingHTML('Loading hunts…');
+
+  let venues = [];
+  try {
+    venues = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    const huntsPerVenue = await Promise.all(venues.map(v => Store.huntsForVenue(v.id).catch(() => [])));
+    huntsHomeCache = venues.flatMap((v, i) => huntsPerVenue[i].map(h => ({ ...h, venueId: v.id, venueName: v.name })));
+  } catch (err) {
+    listEl.innerHTML = errorHTML('Could not load hunts', err);
+    listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsHomeList);
+    return;
+  }
+
+  const venueFilterEl = document.getElementById('hunts-home-venue-filter');
+  if (venues.length > 1) {
+    if (!venues.some(v => v.id === state.huntsHomeVenueFilter)) state.huntsHomeVenueFilter = '';
+    venueFilterEl.style.display = '';
+    venueFilterEl.innerHTML = `
+      <option value="">All Venues</option>
+      ${venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.huntsHomeVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('')}
+    `;
+    venueFilterEl.onchange = () => {
+      state.huntsHomeVenueFilter = venueFilterEl.value;
+      renderHuntsHomeList();
+    };
+  } else {
+    venueFilterEl.style.display = 'none';
+    state.huntsHomeVenueFilter = '';
+  }
+
+  const addFolderBtn = document.getElementById('btn-add-folder');
+  addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
+  addFolderBtn.style.display = state.huntsHomeVenueFilter ? '' : 'none';
+  addFolderBtn.onclick = () => {
+    state.creatingFolderVenueId = state.huntsHomeVenueFilter;
+    renderHuntsHomeList();
+  };
+
+  const focusedVenues = state.huntsHomeVenueFilter
+    ? venues.filter(v => v.id === state.huntsHomeVenueFilter)
+    : venues;
+
+  let registryFoldersByVenue = {};
+  try {
+    const lists = await Promise.all(focusedVenues.map(v => Store.allFolders(v.id).catch(() => [])));
+    focusedVenues.forEach((v, i) => { registryFoldersByVenue[v.id] = lists[i]; });
+  } catch (err) {
+    console.warn('Could not load folders:', err);
+  }
+
+  const searchTerm = state.huntsHomeSearch.toLowerCase();
+  const searching = state.huntsHomeSearch.trim().length > 0;
+
+  const anyContent = focusedVenues.some(v =>
+    huntsHomeCache.some(h => h.venueId === v.id) || (registryFoldersByVenue[v.id] || []).length > 0
+  );
+  if (!anyContent && !state.creatingFolderVenueId) {
+    listEl.innerHTML = '';
+    listEl.appendChild(emptyState(
+      'map', 'No Hunts Yet',
+      state.huntsHomeVenueFilter
+        ? `No hunts exist for ${escapeHTML(focusedVenues[0].name)} yet.`
+        : (CURRENT_MANAGER.isAdmin ? 'No Hunt records exist in CloudKit yet.' : "No hunts exist for your venues yet.")
+    ));
+    return;
+  }
+
+  const anyMatches = focusedVenues.some(v =>
+    huntsHomeCache.some(h => h.venueId === v.id && h.title.toLowerCase().includes(searchTerm))
+  );
+  if (searching && !anyMatches && !focusedVenues.some(v => (registryFoldersByVenue[v.id] || []).length > 0) && !state.creatingFolderVenueId) {
+    listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No hunts match “${escapeHTML(state.huntsHomeSearch)}”.</div></div>`;
+    return;
+  }
+
+  const showVenueHeadings = !state.huntsHomeVenueFilter;
+
+  listEl.innerHTML = focusedVenues.map((v) => {
+    const venueHunts = huntsHomeCache.filter(h => h.venueId === v.id && h.title.toLowerCase().includes(searchTerm));
+    const registryFolders = registryFoldersByVenue[v.id] || [];
+    const isCreatingHere = state.creatingFolderVenueId === v.id;
+    if (venueHunts.length === 0 && registryFolders.length === 0 && !isCreatingHere) return '';
+    return venueFolderSectionHTML(v, venueHunts, registryFolders, isCreatingHere, searching, showVenueHeadings);
+  }).join('');
+
+  if (state.creatingFolderVenueId) {
+    const creatingEl = listEl.querySelector('.folder-header-creating');
+    if (creatingEl) {
+      const venueId = state.creatingFolderVenueId;
+      const input = creatingEl.querySelector('.folder-new-input');
+      input.focus();
+      const cancel = () => { state.creatingFolderVenueId = null; renderHuntsHomeList(); };
+      const save = async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        try {
+          await Store.addFolder(venueId, name);
+          state.creatingFolderVenueId = null;
+          showToast('checkCircle', 'Folder Added');
+          await renderHuntsHomeList();
+        } catch (err) {
+          showAlert({
+            icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+            message: err.message || 'Something went wrong talking to CloudKit.',
+            actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+          });
+        }
+      };
+      creatingEl.querySelector('.save').addEventListener('click', save);
+      creatingEl.querySelector('.cancel').addEventListener('click', cancel);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') save();
+        if (e.key === 'Escape') cancel();
+      });
+    }
+  }
+
+  listEl.querySelectorAll('.venue-add-folder').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.creatingFolderVenueId = btn.dataset.venueAddFolder;
+      renderHuntsHomeList();
+    });
+  });
+
+  listEl.querySelectorAll('.folder-header').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.collapseKey;
+      if (state.collapsedHuntFolders.has(key)) {
+        state.collapsedHuntFolders.delete(key);
+      } else {
+        state.collapsedHuntFolders.add(key);
+      }
+      renderHuntsHomeList();
+    });
+  });
+
+  listEl.querySelectorAll('.hunt-row').forEach((row) => {
+    const huntId = row.dataset.huntHome;
+    const venueId = row.dataset.venue;
+    row.addEventListener('click', () => openEditor(huntId, venueId));
+
+    const actionsEl = row.querySelector('.hr-actions');
+    actionsEl.addEventListener('click', (e) => e.stopPropagation());
+    actionsEl.querySelector('.btn-move-folder').addEventListener('click', () => {
+      const hunt = huntsHomeCache.find(h => h.id === huntId);
+      if (hunt) openMoveFolderPicker(actionsEl, hunt);
+    });
+  });
+}
+
+function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHere, searching, showHeading) {
+  const groups = new Map();
+  venueHunts.forEach((h) => {
+    const key = (h.folder || '').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  });
+  registryFolders.forEach((name) => {
+    if (!groups.has(name)) groups.set(name, []);
+  });
+  const folderKeys = [...groups.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
+  if (groups.has('')) folderKeys.push('');
+
+  const creatingRowHTML = isCreatingHere ? `
+    <div class="folder-group">
+      <div class="folder-header-creating">
+        ${icon('folder')}
+        <input type="text" class="name-edit-input folder-new-input" placeholder="Folder name" />
+        <button class="btn-icon-sm save" type="button" title="Save">${icon('checkCircle')}</button>
+        <button class="btn-icon-sm cancel" type="button" title="Cancel">${icon('close')}</button>
+      </div>
+    </div>
+  ` : '';
+
+  const groupsHTML = folderKeys.map((key) => {
+    const hunts = groups.get(key);
+    const isUncategorized = key === '';
+    const displayName = isUncategorized ? 'Uncategorized' : key;
+    const collapseKey = venue.id + '::' + key;
+    const collapsed = !searching && state.collapsedHuntFolders.has(collapseKey);
+    return `
+      <div class="folder-group ${collapsed ? 'collapsed' : ''}">
+        <button class="folder-header" type="button" data-collapse-key="${escapeAttr(collapseKey)}">
+          ${icon('folder')}
+          <span class="folder-name">${escapeHTML(displayName)}</span>
+          <span class="folder-count">${hunts.length}</span>
+          <span class="folder-chevron">${icon('chevronDown')}</span>
+        </button>
+        <div class="folder-hunts">
+          ${hunts.length ? hunts.map(h => huntHomeRowHTML(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const headingHTML = showHeading ? `
+    <div class="venue-section-heading">
+      <span class="venue-section-name">${escapeHTML(venue.name)}</span>
+      <button class="btn btn-glass venue-add-folder" type="button" data-venue-add-folder="${escapeAttr(venue.id)}">${icon('plus')} Add Folder</button>
+    </div>
+  ` : '';
+
+  return `<div class="venue-section">${headingHTML}${creatingRowHTML}${groupsHTML}</div>`;
+}
+
+function huntHomeRowHTML(h) {
+  return `
+    <div class="hunt-row glass" data-hunt-home="${h.id}" data-venue="${h.venueId}">
+      <div class="hr-icon">${icon('map')}</div>
+      <div class="hr-body">
+        <div class="hr-title">${escapeHTML(h.title)}</div>
+        <div class="hr-sub">${escapeHTML(h.venueName)}</div>
+      </div>
+      <div class="hr-actions">
+        <button class="btn-icon-sm btn-move-folder" type="button" title="Move to folder">${icon('folder')}</button>
+        ${icon('chevronRight')}
+      </div>
+    </div>
+  `;
+}
+
+function openMoveFolderPicker(actionsEl, hunt) {
+  (async () => {
+    let folders = [];
+    try {
+      folders = await Store.allFolders(hunt.venueId);
+    } catch (err) {
+      console.warn('Could not load folders:', err);
+    }
+    actionsEl.innerHTML = folderSelectHTML(folders, hunt.folder, 'folder-select folder-select-sm');
+    const select = actionsEl.querySelector('select');
+    select.focus();
+    wireFolderSelect(select, hunt.venueId, async (name) => {
+      if (name === null) { renderHuntsHomeList(); return; }
+      try {
+        await Store.setHuntFolder(hunt.id, hunt.recordChangeTag, name);
+        showToast('checkCircle', 'Hunt Moved');
+        await renderHuntsHomeList();
+      } catch (err) {
+        showAlert({
+          icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Move Hunt',
+          message: err.message || 'Something went wrong talking to CloudKit.',
+          actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+        });
+        renderHuntsHomeList();
+      }
+    });
+  })();
+}
 
 async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
-  renderTopbar('topbar-users', [{ label: 'All Users' }]);
+  renderPageHeader([]);
+  showView('users');
+
+  const actionsEl = document.getElementById('users-actions');
+  if (!CURRENT_MANAGER.isAdmin) {
+    actionsEl.style.display = 'none';
+    document.getElementById('users-list').innerHTML =
+      restrictedStateHTML("You need administrator access to view and manage the people signed in to this console.");
+    return;
+  }
+  actionsEl.style.display = '';
+
   renderSearchBox('user-search-box', 'Search users', state.userSearch, (v) => {
     state.userSearch = v;
     renderUsersList();
@@ -759,7 +1133,6 @@ async function goToUsers() {
     renderUsersList();
   };
 
-  showView('users');
   await renderUsersList();
 }
 
@@ -784,8 +1157,6 @@ async function renderUsersList() {
     switch (state.userFilter) {
       case 'admins': return u.isAdmin;
       case 'managers': return managesAnyVenue(u);
-      // "App Users" = a plain signed-in account with no elevated role yet —
-      // not managing any venue and not an administrator.
       case 'app': return !u.isAdmin && !managesAnyVenue(u);
       default: return true;
     }
@@ -840,9 +1211,12 @@ async function renderUsersList() {
         const newName = input.value.trim();
         if (!newName) return;
         try {
-          // true: an admin manually setting this name is always authoritative,
-          // unlike a sign-in's best-effort/possibly-fallback name.
           await Store.upsertDirectoryEntry(u.userRecordName, newName, u.email, true);
+          if (u.userRecordName === CURRENT_MANAGER.userRecordName) {
+            CURRENT_MANAGER.name = newName;
+            CURRENT_MANAGER.hasRealName = true;
+            renderSidebar();
+          }
           showToast('checkCircle', 'Name Updated');
           await renderUsersList();
         } catch (err) {
@@ -898,7 +1272,7 @@ function userRowHTML(u, venues) {
         <div class="hr-body">
           <div class="hr-title">
             <span class="user-name-display">${escapeHTML(u.name) || 'Unnamed'}</span>
-            ${u.isAdmin ? adminBadgeHTML() : ''}
+            ${u.isAdmin ? adminBadgeHTML() : managedVenues.length ? managerBadgeHTML() : appUserBadgeHTML()}
             <button class="btn-icon-sm btn-edit-name" type="button" title="Edit name">${icon('pencil')}</button>
           </div>
           <div class="hr-sub">${escapeHTML(u.email)}</div>
@@ -960,9 +1334,52 @@ function confirmUnassignManager(user, venueId, venues) {
   });
 }
 
-/* ---------------------------------------------------------------
-   Hunts view
------------------------------------------------------------------- */
+async function goToSettings() {
+  state.venueId = null;
+  state.huntId = null;
+  renderPageHeader([]);
+  showView('settings');
+
+  const el = document.getElementById('settings-body');
+  const theme = getStoredTheme();
+  const collapsed = getSidebarCollapsed();
+
+  el.innerHTML = `
+    <div class="panel glass" style="max-width:480px;">
+      <p class="panel-title">Appearance</p>
+      <div class="field">
+        <label class="label">Theme</label>
+        <div class="segmented-control" id="theme-control">
+          <button type="button" data-value="light" class="${theme === 'light' ? 'active' : ''}">Light</button>
+          <button type="button" data-value="dark" class="${theme === 'dark' ? 'active' : ''}">Dark</button>
+          <button type="button" data-value="system" class="${theme === 'system' ? 'active' : ''}">System</button>
+        </div>
+      </div>
+      <div class="field settings-toggle-row" style="margin-bottom:0;">
+        <div>
+          <label class="label" style="margin-bottom:2px;">Collapse Sidebar</label>
+          <div class="settings-desc">Show icons only, to save horizontal space.</div>
+        </div>
+        <button class="toggle-switch ${collapsed ? 'on' : ''}" id="sidebar-collapse-toggle" type="button" role="switch" aria-checked="${collapsed}"></button>
+      </div>
+    </div>
+  `;
+
+  el.querySelectorAll('#theme-control button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyTheme(btn.dataset.value);
+      el.querySelectorAll('#theme-control button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  const sidebarToggle = document.getElementById('sidebar-collapse-toggle');
+  sidebarToggle.addEventListener('click', () => {
+    const next = !getSidebarCollapsed();
+    applySidebarCollapsed(next);
+    sidebarToggle.classList.toggle('on', next);
+    sidebarToggle.setAttribute('aria-checked', String(next));
+  });
+}
 
 let huntsCache = [];
 let huntClueCounts = {};
@@ -974,7 +1391,7 @@ async function goToHunts(venueId) {
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
-  renderTopbar('topbar-hunts', [
+  renderPageHeader([
     { label: 'Venues', onClick: goToVenues },
     { label: escapeHTML(venue.name) },
   ]);
@@ -1047,10 +1464,6 @@ async function renderHuntsList() {
   });
 }
 
-/* ---------------------------------------------------------------
-   Hunt editor
------------------------------------------------------------------- */
-
 async function openEditor(huntId, venueId) {
   state.venueId = venueId;
   state.huntId = huntId;
@@ -1059,7 +1472,7 @@ async function openEditor(huntId, venueId) {
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
-  renderTopbar('topbar-editor', [
+  renderPageHeader([
     { label: 'Venues', onClick: goToVenues },
     { label: escapeHTML(venue.name), onClick: () => goToHunts(venueId) },
     { label: state.isNewHunt ? 'New Hunt' : 'Loading…' },
@@ -1080,11 +1493,11 @@ async function openEditor(huntId, venueId) {
       document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId));
       return;
     }
-    state.draft = { title: h.title, description: h.description, clues: clueList.map(c => ({ ...c })) };
+    state.draft = { title: h.title, description: h.description, folder: h.folder || '', clues: clueList.map(c => ({ ...c })) };
     state.originalClueIds = new Set(clueList.map(c => c.id));
     state.huntChangeTag = h.recordChangeTag;
   } else {
-    state.draft = { title: '', description: '', clues: [] };
+    state.draft = { title: '', description: '', folder: '', clues: [] };
     state.originalClueIds = new Set();
     state.huntChangeTag = null;
   }
@@ -1097,6 +1510,7 @@ async function openEditor(huntId, venueId) {
   descInput.value = state.draft.description;
   titleInput.oninput = (e) => { state.draft.title = e.target.value; renderPreview(); syncCrumbTitle(); };
   descInput.oninput = (e) => { state.draft.description = e.target.value; };
+  renderHuntFolderField();
 
   const addBtn = document.getElementById('btn-add-clue');
   addBtn.innerHTML = `${icon('plusCircle')} Add Clue`;
@@ -1119,8 +1533,24 @@ async function openEditor(huntId, venueId) {
   renderPreview();
 }
 
+async function renderHuntFolderField() {
+  const wrap = document.getElementById('hunt-folder-field');
+  wrap.innerHTML = loadingHTML('Loading folders…');
+  let folders = [];
+  try {
+    folders = await Store.allFolders(state.venueId);
+  } catch (err) {
+    console.warn('Could not load folders:', err);
+  }
+  wrap.innerHTML = folderSelectHTML(folders, state.draft.folder, 'folder-select');
+  wireFolderSelect(wrap.querySelector('select'), state.venueId, (name) => {
+    if (name !== null) state.draft.folder = name;
+    renderHuntFolderField();
+  });
+}
+
 function syncCrumbTitle() {
-  const crumbCurrent = document.querySelector('#topbar-editor .crumb-current');
+  const crumbCurrent = document.querySelector('#page-header .crumb-current');
   if (crumbCurrent) crumbCurrent.textContent = state.draft.title || (state.isNewHunt ? 'New Hunt' : 'Hunt');
 }
 
@@ -1233,7 +1663,6 @@ function renderClueList() {
       });
     }
 
-    // Drag reorder
     row.draggable = true;
     row.addEventListener('dragstart', (e) => {
       e.dataTransfer.effectAllowed = 'move';
@@ -1268,6 +1697,12 @@ function tagStatusBadgeHTML(status) {
 
 function adminBadgeHTML() {
   return `<span class="status-badge status-admin">${icon('gear')}Administrator</span>`;
+}
+function managerBadgeHTML() {
+  return `<span class="status-badge status-manager">${icon('building')}Manager</span>`;
+}
+function appUserBadgeHTML() {
+  return `<span class="status-badge status-appuser">${icon('person')}User</span>`;
 }
 
 function clueRowHTML(c, index) {
@@ -1331,11 +1766,6 @@ function reorderClues(draggedId, targetId) {
   renderPreview();
 }
 
-// Always a random 20-character mix of capital letters, digits, and symbols —
-// managers can't type or edit this, it's only ever machine-generated. This
-// is the exact text that gets written to a physical NFC tag once one is
-// manufactured, so it deliberately excludes visually-ambiguous characters
-// (I/O and 0/1) even though it's meant to be copy-pasted, not hand-typed.
 const TAG_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const TAG_DIGITS = '23456789';
 const TAG_SYMBOLS = '!@#$%^&*+=?';
@@ -1345,9 +1775,6 @@ function generateTagID() {
   const all = TAG_LETTERS + TAG_DIGITS + TAG_SYMBOLS;
   const pick = (src) => src[Math.floor(Math.random() * src.length)];
 
-  // Guarantee at least one letter, one digit, and one symbol, then fill the
-  // rest randomly from the combined pool and shuffle so the guaranteed
-  // characters aren't always sitting in the first three positions.
   const chars = [pick(TAG_LETTERS), pick(TAG_DIGITS), pick(TAG_SYMBOLS)];
   while (chars.length < TAG_LENGTH) chars.push(pick(all));
   for (let i = chars.length - 1; i > 0; i--) {
@@ -1373,8 +1800,6 @@ function requestTagForClue(clue) {
     `Tag ID (must match exactly — matching is case-insensitive): ${clue.nfcTagID}`,
   ].join('\n');
 
-  // mailto: hands off to the OS mail client without navigating away from
-  // the page — no backend/email service needed for this.
   window.location.href = `mailto:${encodeURIComponent(TAG_REQUEST_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   clue.tagStatus = 'requested';
@@ -1382,10 +1807,6 @@ function requestTagForClue(clue) {
   renderPreview();
   showToast('mail', 'Tag Requested');
 }
-
-/* ---------------------------------------------------------------
-   Preview phone
------------------------------------------------------------------- */
 
 function renderPreview() {
   document.getElementById('pv-hunt-title').textContent = state.draft.title || 'Untitled Hunt';
@@ -1411,10 +1832,6 @@ function renderPreview() {
     bodyEl.textContent = 'Select or add a clue to preview it here.';
   }
 }
-
-/* ---------------------------------------------------------------
-   Save / delete hunt & clue confirmations
------------------------------------------------------------------- */
 
 async function saveHunt() {
   const title = state.draft.title.trim();
@@ -1446,7 +1863,7 @@ async function saveHunt() {
     await Store.saveHunt(
       state.huntId,
       state.venueId,
-      { title, description: state.draft.description.trim() },
+      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim() },
       state.draft.clues,
       state.originalClueIds,
       state.huntChangeTag
@@ -1505,10 +1922,6 @@ function confirmDeleteClue(clueId) {
   });
 }
 
-/* ---------------------------------------------------------------
-   Glass alert overlay + toast
------------------------------------------------------------------- */
-
 function showAlert({ icon: iconName, tone, title, message, actions }) {
   const overlay = document.getElementById('overlay');
   const card = document.getElementById('alert-card');
@@ -1540,12 +1953,8 @@ function showToast(iconName, message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
-/* ---------------------------------------------------------------
-   Sign in / out
------------------------------------------------------------------- */
-
-const signInBtn = document.getElementById('btn-signin');       // demo-mode-only custom button
-const ckAuthButton = document.getElementById('apple-sign-in-button'); // real CloudKit-injected button
+const signInBtn = document.getElementById('btn-signin');
+const ckAuthButton = document.getElementById('apple-sign-in-button');
 const signInFoot = document.getElementById('signin-foot');
 const demoBanner = document.getElementById('demo-banner');
 
@@ -1554,12 +1963,6 @@ async function handleSignedIn(identity) {
   await finishSignIn();
 }
 
-// Runs after CURRENT_MANAGER's identity (userRecordName/name/email) is set,
-// regardless of mock or real auth. Checks admin status and upserts this
-// person's directory entry (see config.js items 5-9) before routing —
-// both are best-effort: a failure here shouldn't block sign-in itself,
-// it just means they're treated as a non-admin and/or don't show up in
-// the admin Users list yet.
 async function finishSignIn() {
   try {
     CURRENT_MANAGER.isAdmin = await Store.checkIsAdmin(CURRENT_MANAGER.userRecordName);
@@ -1567,21 +1970,26 @@ async function finishSignIn() {
     console.warn('Could not check admin status:', err);
     CURRENT_MANAGER.isAdmin = false;
   }
+  if (!CURRENT_MANAGER.hasRealName) {
+    try {
+      const existing = await Store.getDirectoryEntry(CURRENT_MANAGER.userRecordName);
+      if (existing && existing.name) {
+        CURRENT_MANAGER.name = existing.name;
+        CURRENT_MANAGER.hasRealName = true;
+      }
+    } catch (err) {
+      console.warn('Could not look up existing directory entry:', err);
+    }
+  }
   try {
     await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email, CURRENT_MANAGER.hasRealName);
   } catch (err) {
     console.warn('Could not update user directory entry:', err);
   }
+  renderSidebar();
   await enterAfterSignIn();
 }
 
-// Managers are only ever assigned to one venue in practice, so skip the
-// venue grid and land straight on that venue's hunts. Still falls back to
-// the grid for the 0-venue ("not assigned yet") and >1-venue edge cases —
-// see the "All Venues" account-menu item / venues breadcrumb for the way
-// back if either of those ever comes up. Admins always land on the venues
-// grid (showing every venue) — auto-jumping into one particular venue
-// doesn't make sense once "all venues" is the point.
 async function enterAfterSignIn() {
   if (CURRENT_MANAGER.isAdmin) {
     await goToVenues();
@@ -1608,10 +2016,6 @@ function signOut() {
   CURRENT_MANAGER.email = '';
   CURRENT_MANAGER.isAdmin = false;
   if (!USE_MOCK) {
-    // Proxy to CloudKit's own (hidden) sign-out button, since CloudKit JS
-    // doesn't expose a plain programmatic "sign out" call — it's meant to be
-    // triggered by clicking the button it injects into #apple-sign-out-button.
-    // This is what makes watchSignOut() (below) resolve and re-arm sign-in.
     const realSignOutBtn = document.querySelector('#apple-sign-out-button *');
     if (realSignOutBtn) realSignOutBtn.click();
   }
@@ -1634,10 +2038,6 @@ if (USE_MOCK) {
   signInBtn.style.display = 'none';
   ckAuthButton.classList.add('visible');
 
-  // whenUserSignsIn()/whenUserSignsOut() are one-shot promises — each
-  // resolves exactly once, then is done. To support signing in, out, and
-  // back in again within one page load, re-subscribe after each event
-  // instead of attaching a single .then() at startup.
   function watchSignIn() {
     container.whenUserSignsIn().then((identity) => {
       handleSignedIn(identity);
@@ -1652,21 +2052,10 @@ if (USE_MOCK) {
       watchSignIn();
     }).catch((err) => {
       console.warn('CloudKit sign-out listener error:', err);
-      watchSignIn(); // still re-arm sign-in even if this listener itself errored
+      watchSignIn();
     });
   }
 
-  // setUpAuth() must run first — it's what actually injects the real button
-  // into the containers above, and it also resolves with the existing user
-  // if a persisted session cookie is still valid (auto-resume). Only start
-  // ONE watch chain based on its result (signed in -> watch for sign-out;
-  // not signed in -> watch for sign-in) so we never end up with two
-  // competing whenUserSignsIn()/whenUserSignsOut() subscriptions racing
-  // each other, which is what happens if you start watchSignIn() up front
-  // and then separately react to setUpAuth resolving with an identity too.
-  // If the token/environment/origin is wrong, this REJECTS (it does not
-  // just resolve null) and no button ever gets injected — that's the
-  // "no button shows up at all" failure mode, so surface it visibly.
   container.setUpAuth().then((identity) => {
     if (identity) {
       handleSignedIn(identity);
@@ -1685,10 +2074,6 @@ function showAuthError(err) {
   signInFoot.textContent = reason;
   signInFoot.style.color = 'var(--red)';
 }
-
-/* ---------------------------------------------------------------
-   Utils
------------------------------------------------------------------- */
 
 function escapeHTML(str) {
   return (str ?? '').replace(/[&<>"']/g, (m) => ({

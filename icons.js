@@ -1,5 +1,3 @@
-// Minimal inline SF-Symbols-style icon set (stroke-based, rounded) so the
-// console has zero external dependencies and works fully offline.
 const ICONS = {
   map: '<path d="M9 3 3 5v16l6-2 6 2 6-2V3l-6 2-6-2Z"/><path d="M9 3v16"/><path d="M15 5v16"/>',
   lightbulb: '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2.3h6c0-1.1.4-1.8 1-2.3A7 7 0 0 0 12 2Z"/>',
@@ -25,6 +23,8 @@ const ICONS = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   boxSeam: '<path d="m3.5 8 8.5-4 8.5 4-8.5 4-8.5-4Z"/><path d="M3.5 8v8l8.5 4 8.5-4V8"/><path d="M12 12v8"/>',
   pencil: '<path d="m16.5 3.5 4 4L7 21l-4.5 1L4 17.5Z"/><path d="m14.5 5.5 4 4"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
 };
 
 function icon(name, cls = '') {
