@@ -1,27 +1,3 @@
-/* ---------------------------------------------------------------
-   Muse Console — app logic
-
-   Two data layers behind one interface (`Store`):
-   - MockStore: in-memory sample data, used whenever config.js has no
-     apiToken configured (or the CloudKit script failed to load) so
-     the UI is still fully clickable without touching production.
-   - CloudKitStore: real CloudKit JS calls against the public database,
-     used once CLOUDKIT_CONFIG.apiToken is set.
-
-   CloudKit JS reference: https://developer.apple.com/documentation/cloudkitjs
-   The CloudKitStore methods below are written against the documented
-   v2 API (CloudKit.configure / performQuery / saveRecords / deleteRecords /
-   setUpAuth / whenUserSignsIn) but have NOT been exercised against a
-   live container from here — there's no way for me to do that without
-   your real API token. Test read access (sign in, load venues) before
-   trusting the write paths (save/delete), and watch the browser console
-   for CloudKit's own error payloads if something doesn't match.
-
-   SCHEMA REQUIREMENT: Venue needs a `managers` field (List<String> of
-   CloudKit userRecordNames) for the venuesForManager query below to
-   work — see config.js for the full Dashboard checklist.
------------------------------------------------------------------- */
-
 const USE_MOCK = typeof CloudKit === 'undefined' || !CLOUDKIT_CONFIG.apiToken;
 
 let container = null;
@@ -40,10 +16,6 @@ if (!USE_MOCK) {
 }
 
 const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: false, hasRealName: false };
-
-/* ---------------------------------------------------------------
-   Mock data store (demo mode)
------------------------------------------------------------------- */
 
 const MockStore = (() => {
   let venues = [
@@ -67,16 +39,8 @@ const MockStore = (() => {
   let seq = 100;
   const nextId = (prefix) => `${prefix}_${seq++}`;
 
-  // Folder names created empty (via "Add Folder") before any hunt has been
-  // moved into them — see allFolders/addFolder. Keyed by venueId: folders
-  // are scoped per venue, so two venues can each have their own
-  // same-named folder without merging.
   let folderRegistry = {};
 
-  // The signed-in demo identity is the site owner, so it's an administrator
-  // by default — a good way to exercise the admin views in demo mode. Note
-  // venue_3 above is managed by "someone_else", not mock_manager, which is
-  // exactly the case that shows off admin bypassing the normal manager filter.
   let appUsers = [
     { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com', isAdmin: true },
     { userRecordName: 'someone_else', name: 'Jordan Reyes', email: 'jordan.reyes@example.com', isAdmin: false },
@@ -153,11 +117,6 @@ const MockStore = (() => {
       hunts = hunts.filter(h => h.id !== huntId);
       clues = clues.filter(c => c.huntId !== huntId);
     },
-    // Union, scoped to one venue, of explicitly-registered (possibly still
-    // empty) folders and whatever folder names are already in use on that
-    // venue's hunts — a folder created before this registry existed, or
-    // set by typing directly into an old build's free-text Folder field,
-    // still shows up here.
     async allFolders(venueId) {
       const fromHunts = hunts.filter(h => h.venueId === venueId).map(h => (h.folder || '').trim()).filter(Boolean);
       const registered = folderRegistry[venueId] || [];
@@ -178,16 +137,6 @@ const MockStore = (() => {
   };
 })();
 
-/* ---------------------------------------------------------------
-   CloudKit data store (live mode)
------------------------------------------------------------------- */
-
-// Two different reference shapes: query filters want a bare { recordName }
-// (an extra `action` key here can keep the filter from matching anything —
-// this was silently returning zero rows for `venueReference == %@` queries
-// rather than throwing, which is what made "no hunts" look like an empty
-// venue instead of a broken filter). Saved record fields need `action` set
-// (CloudKit requires it on any reference field being written).
 function ckRefQuery(recordName) {
   return { recordName };
 }
@@ -195,18 +144,12 @@ function ckRefSave(recordName) {
   return { recordName, action: 'NONE' };
 }
 
-// Fixed recordName for the single shared FolderRegistry record — see
-// config.js item 11.
 function folderRegistryRecordName(venueId) {
   return 'folder_registry_' + venueId;
 }
 
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
-    // Batch saveRecords/deleteRecords calls can partially fail — logging the
-    // full per-record breakdown (not just the first error) is the only way
-    // to tell which specific record failed and why when only one of several
-    // clues in the same save fails, e.g. with a different reason each time.
     console.warn('CloudKit request had errors:', response.errors);
     const first = response.errors && response.errors[0];
     const reason = (first && (first.reason || first.serverErrorCode)) || 'CloudKit request failed';
@@ -230,8 +173,6 @@ function recordToHunt(r) {
     recordChangeTag: r.recordChangeTag,
     title: r.fields.title && r.fields.title.value,
     description: r.fields.description && r.fields.description.value,
-    // Hunt records saved before this field existed won't have it — treated
-    // as "no folder" (shown in the Uncategorized group), not an error.
     folder: (r.fields.folder && r.fields.folder.value) || '',
     venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
   };
@@ -244,21 +185,13 @@ function recordToClue(r) {
     title: r.fields.title && r.fields.title.value,
     body: r.fields.body && r.fields.body.value,
     nfcTagID: r.fields.nfcTagID && r.fields.nfcTagID.value,
-    // Clue records saved before the tagStatus field existed won't have it —
-    // treat those as "pending" rather than crashing or showing a blank status.
     tagStatus: (r.fields.tagStatus && r.fields.tagStatus.value) || 'pending',
     huntId: r.fields.huntReference && r.fields.huntReference.value && r.fields.huntReference.value.recordName,
   };
 }
 
 const CloudKitStore = {
-  // Auth (setUpAuth / whenUserSignsIn) is wired directly in the "Sign in / out"
-  // section below, not here — see the note there for why.
 
-  // Fails closed (returns false) on any error, including "field doesn't
-  // exist" or a permissions problem reading the Users type's custom field —
-  // an admin-check that can't be confirmed should never silently grant
-  // access. See config.js item 8 if this always comes back false.
   async checkIsAdmin(userRecordName) {
     try {
       const response = await publicDB.fetchRecords(userRecordName);
@@ -272,28 +205,6 @@ const CloudKitStore = {
     }
   },
 
-  // Upserts this person's directory entry. operationType: 'forceUpdate' was
-  // supposed to mean "create if missing, update if present, no changeTag
-  // needed" per Apple's docs, but in practice against this container it
-  // still hits "record to insert already exists" once the record is real —
-  // same failure signature as the original Hunt/Clue save bug. Rather than
-  // trust that operationType's documented behavior a second time, fetch
-  // first and explicitly choose create vs. update, exactly like
-  // saveHunt/assignManager already do reliably.
-  //
-  // The AppUser record's OWN recordName can't just be the person's
-  // userRecordName — recordName is unique across the whole database, not
-  // per record type, and that name is already taken by their built-in
-  // Users record ("invalid attempt to update record from type 'Users' to
-  // 'AppUser'"). Prefixing it keeps the lookup deterministic while
-  // guaranteeing no collision with the reserved type.
-  //
-  // hasRealName distinguishes an Apple-shared name from our own locally
-  // computed placeholder (see identityToManager) — only a real name is
-  // written here, and 'update' only touches the fields it includes, so
-  // omitting `name` entirely leaves whatever's already stored untouched.
-  // Without this, every sign-in with no real name from Apple would
-  // silently overwrite a name an admin had manually set on the Users page.
   async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
     const recordName = 'appuser_' + userRecordName;
     let existing = null;
@@ -324,17 +235,9 @@ const CloudKitStore = {
     }));
   },
 
-  // Used at sign-in to recover a name Apple didn't share this time — e.g. a
-  // returning sign-in (Apple mostly only shares name/email on the very first
-  // authorization) or one an admin set by hand from the Users page.
   async getDirectoryEntry(userRecordName) {
     const response = await publicDB.fetchRecords('appuser_' + userRecordName);
     if (response.hasErrors) {
-      // CloudKit JS reports failures (permission denied, record not found,
-      // etc.) as a resolved { hasErrors: true } response rather than a
-      // rejection — silently treating that the same as "no entry yet" was
-      // hiding the actual reason. Log it so it shows up in the console
-      // instead of just silently not finding a name that really is there.
       console.warn('getDirectoryEntry fetch had errors:', response.errors);
       return null;
     }
@@ -346,10 +249,6 @@ const CloudKitStore = {
     };
   },
 
-  // No filterBy — an admin needs every venue regardless of who manages it.
-  // Unverified against a live container like everything else here: if this
-  // errors, CloudKit may require an explicit filter even for "all records
-  // of this type" queries.
   async allVenues() {
     const response = await publicDB.performQuery({ recordType: 'Venue' });
     assertNoErrors(response);
@@ -433,10 +332,6 @@ const CloudKitStore = {
   },
 
   async saveHunt(huntId, venueId, data, clueList, originalClueIds, huntChangeTag) {
-    // CloudKit requires recordChangeTag + operationType: 'update' to modify an
-    // existing record — without them it's treated as a create, which fails
-    // with "record to insert already exists" for anything that already has
-    // a recordName. Creates (no recordName yet) don't need either.
     const huntRecord = huntId
       ? {
           recordName: huntId,
@@ -487,14 +382,6 @@ const CloudKitStore = {
     assertNoErrors(await publicDB.deleteRecords([huntId]));
   },
 
-  // Union, scoped to one venue, of explicitly-registered (possibly still
-  // empty) folders and whatever folder names are already in use on that
-  // venue's hunts, same reasoning as MockStore.allFolders. The registry is
-  // one record per venue — see config.js item 11 for why Hunt.folder alone
-  // can't represent an empty folder, and why this isn't just a field on
-  // Venue. Fetching a record that doesn't exist yet (nobody's used "Add
-  // Folder" for this venue so far) comes back as hasErrors, which is the
-  // expected first-run state here, not something worth logging.
   async allFolders(venueId) {
     const [registryResp, hunts] = await Promise.all([
       publicDB.fetchRecords(folderRegistryRecordName(venueId)),
@@ -521,8 +408,6 @@ const CloudKitStore = {
     assertNoErrors(await publicDB.saveRecords([record]));
   },
 
-  // Lightweight single-field update — cheaper than routing a folder move
-  // through saveHunt, which also expects the full clue list.
   async setHuntFolder(huntId, recordChangeTag, folder) {
     const response = await publicDB.saveRecords([{
       recordName: huntId,
@@ -540,12 +425,6 @@ function identityToManager(identity) {
     ? [identity.nameComponents.givenName, identity.nameComponents.familyName].filter(Boolean)
     : [];
   const email = (identity.lookupInfo && identity.lookupInfo.emailAddress) || '';
-  // Apple only sends a real name/email here if the API token was created
-  // with "Request user discoverability at sign in" AND the person consents
-  // to sharing when prompted — neither is guaranteed, so this commonly
-  // comes back empty. Fall back to something distinguishable rather than
-  // a flat "Manager" for every unnamed person; an admin can always set a
-  // real name afterward from the Users page (pencil icon next to a name).
   const fallbackName = email ? email.split('@')[0] : `User ${identity.userRecordName.slice(-6)}`;
   return {
     userRecordName: identity.userRecordName,
@@ -556,10 +435,6 @@ function identityToManager(identity) {
 }
 
 const Store = USE_MOCK ? MockStore : CloudKitStore;
-
-/* ---------------------------------------------------------------
-   App state
------------------------------------------------------------------- */
 
 const state = {
   venueId: null,
@@ -573,24 +448,15 @@ const state = {
   huntSearch: '',
   userSearch: '',
   showUserIds: false,
-  userFilter: 'all', // 'all' | 'app' | 'managers' | 'admins'
+  userFilter: 'all',
   huntsHomeSearch: '',
-  // Keyed by "<venueId>::<folderName>", since folders are venue-scoped —
-  // two venues can each have a same-named folder without collapsing one
-  // also collapsing the other. Resets on reload.
   collapsedHuntFolders: new Set(),
-  // venueId of the folder currently being created inline (see the "Add
-  // Folder" button), or null when nothing's being created.
   creatingFolderVenueId: null,
-  huntsHomeVenueFilter: '', // '' = All Venues; otherwise a venueId
+  huntsHomeVenueFilter: '',
 };
 
 let draftClueSeq = 1;
 const draftClueId = () => `draft_${draftClueSeq++}`;
-
-/* ---------------------------------------------------------------
-   View switching
------------------------------------------------------------------- */
 
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -600,10 +466,6 @@ function showView(name) {
   closeAccountMenus();
   window.scrollTo({ top: 0 });
 }
-
-/* ---------------------------------------------------------------
-   Loading / error helpers
------------------------------------------------------------------- */
 
 function loadingHTML(label) {
   return `<div class="loading-state"><div class="spinner"></div><div>${escapeHTML(label)}</div></div>`;
@@ -619,9 +481,6 @@ function errorHTML(title, err, retryLabel) {
   </div>`;
 }
 
-// Shown in place of a page's real content for signed-in managers viewing an
-// admin-only page — the nav item itself stays visible for everyone (rather
-// than winking in/out depending on role), this is what fills the page.
 function restrictedStateHTML(message) {
   return `<div class="empty-state">
     ${icon('lock')}
@@ -629,13 +488,6 @@ function restrictedStateHTML(message) {
     <div class="es-desc">${escapeHTML(message)}</div>
   </div>`;
 }
-
-/* ---------------------------------------------------------------
-   Appearance / layout preferences — per-browser, not per-account, so
-   these live in localStorage rather than CloudKit. Every signed-in
-   person can change these for themselves regardless of role (see
-   Settings view below).
------------------------------------------------------------------- */
 
 const THEME_KEY = 'museTheme';
 const SIDEBAR_COLLAPSED_KEY = 'museSidebarCollapsed';
@@ -661,23 +513,9 @@ function applySidebarCollapsed(collapsed) {
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
 }
 
-// Applied immediately at load (not gated behind sign-in) so the sidebar is
-// already in the right state the moment it becomes visible, rather than
-// flashing expanded-then-collapsed right after signing in.
 applySidebarCollapsed(getSidebarCollapsed());
 
-/* ---------------------------------------------------------------
-   Sidebar (nav + account menu) / page header (breadcrumbs)
------------------------------------------------------------------- */
-
-// Nav (Venues/Users) and the account menu are chrome that doesn't change
-// per-view — built once after sign-in rather than re-rendered on every
-// navigation like the old per-view topbar was. setActiveNav (called from
-// showView) is the only per-navigation update this needs.
 function renderSidebar() {
-  // Every nav item is visible to everyone regardless of role — a page that's
-  // actually restricted (Users, Settings) says so with its own lock/message
-  // once you're on it, rather than the sidebar hiding the destination.
   const navVenues = document.getElementById('nav-venues');
   const navHuntsHome = document.getElementById('nav-hunts-home');
   const navUsers = document.getElementById('nav-users');
@@ -735,9 +573,6 @@ function renderSidebar() {
   });
 }
 
-// Highlights the sidebar nav item for the current section — the venue-scoped
-// hunts list and the hunt editor are both reached by drilling into a venue
-// (not via the top-level Hunts nav item), so they keep "Venues" highlighted.
 function setActiveNav(view) {
   const section = (view === 'hunts' || view === 'editor') ? 'venues' : view;
   ['venues', 'hunts-home', 'users', 'settings'].forEach((id) => {
@@ -775,19 +610,11 @@ function closeAccountMenus() {
 }
 document.addEventListener('click', closeAccountMenus);
 
-/* ---------------------------------------------------------------
-   Search box helper
------------------------------------------------------------------- */
-
 function renderSearchBox(containerId, placeholder, value, onInput) {
   const el = document.getElementById(containerId);
   el.innerHTML = `${icon('search')}<input type="text" placeholder="${placeholder}" value="${escapeAttr(value)}" />`;
   el.querySelector('input').addEventListener('input', (e) => onInput(e.target.value));
 }
-
-/* ---------------------------------------------------------------
-   Venues view
------------------------------------------------------------------- */
 
 async function goToVenues() {
   state.venueId = null;
@@ -803,10 +630,6 @@ async function goToVenues() {
     ? `All Venues ${adminBadgeHTML()}`
     : 'Your Venues';
 
-  // Venue creation is admin-only — the Venue record type's Write role in
-  // CloudKit is restricted to the Muse Administrators role (see config.js),
-  // so a non-admin's create would fail server-side anyway; hiding the
-  // button just keeps the UI honest about that.
   const newVenueBtn = document.getElementById('btn-new-venue');
   newVenueBtn.style.display = CURRENT_MANAGER.isAdmin ? '' : 'none';
   newVenueBtn.innerHTML = `${icon('plus')} Add Venue`;
@@ -938,12 +761,6 @@ function emptyState(iconName, title, desc) {
   return div;
 }
 
-/* ---------------------------------------------------------------
-   Shared folder-picker <select> — used by the hunt editor's Folder
-   field and the "Move to Folder" button on the All Hunts screen. Lists
-   every known folder name plus an "Add New Folder…" option.
------------------------------------------------------------------- */
-
 const ADD_NEW_FOLDER_VALUE = '__add_new_folder__';
 
 function folderSelectHTML(folders, selectedValue, extraClass) {
@@ -956,12 +773,6 @@ function folderSelectHTML(folders, selectedValue, extraClass) {
   `;
 }
 
-// Wires a folder <select> scoped to one venue: choosing an existing folder
-// (or "No Folder") calls onChoose(value) immediately. Choosing "Add New
-// Folder…" swaps the select for an inline text input in place (same
-// pattern as userRowHTML's edit-name flow) and calls onChoose(name) once
-// it's registered — to that venue's registry — or onChoose(null) if
-// cancelled — callers treat null as "nothing changed, just re-render".
 function wireFolderSelect(selectEl, venueId, onChoose) {
   selectEl.addEventListener('change', async () => {
     if (selectEl.value !== ADD_NEW_FOLDER_VALUE) {
@@ -999,21 +810,12 @@ function wireFolderSelect(selectEl, venueId, onChoose) {
   });
 }
 
-/* ---------------------------------------------------------------
-   All Hunts view (every hunt across every venue you can access —
-   a flat shortcut into the hunt editor without picking a venue first)
------------------------------------------------------------------- */
-
 async function goToHuntsHome() {
   state.venueId = null;
   state.huntId = null;
   state.creatingFolderVenueId = null;
   state.huntsHomeVenueFilter = '';
 
-  // Same shortcut enterAfterSignIn() already uses: a manager assigned to
-  // exactly one venue has no real use for a flat "every hunt" list, so skip
-  // straight to that venue's hunts instead. Admins always see the full list —
-  // there's no single "my venue" for someone with access to all of them.
   if (!CURRENT_MANAGER.isAdmin) {
     try {
       const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
@@ -1056,9 +858,6 @@ async function renderHuntsHomeList() {
     return;
   }
 
-  // Venue switcher — only worth showing when there's actually more than one
-  // venue to switch between (a manager with exactly one venue never reaches
-  // this screen at all; see the redirect above).
   const venueFilterEl = document.getElementById('hunts-home-venue-filter');
   if (venues.length > 1) {
     if (!venues.some(v => v.id === state.huntsHomeVenueFilter)) state.huntsHomeVenueFilter = '';
@@ -1076,9 +875,6 @@ async function renderHuntsHomeList() {
     state.huntsHomeVenueFilter = '';
   }
 
-  // Folders belong to exactly one venue, so "Add Folder" only makes sense
-  // once a single venue is in focus — under "All Venues" each venue's own
-  // section gets its own Add Folder button instead (see below).
   const addFolderBtn = document.getElementById('btn-add-folder');
   addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
   addFolderBtn.style.display = state.huntsHomeVenueFilter ? '' : 'none';
@@ -1124,8 +920,6 @@ async function renderHuntsHomeList() {
     return;
   }
 
-  // Subgroup by venue only under "All Venues" — with one venue in focus its
-  // own heading would be redundant with the switcher above it.
   const showVenueHeadings = !state.huntsHomeVenueFilter;
 
   listEl.innerHTML = focusedVenues.map((v) => {
@@ -1192,9 +986,6 @@ async function renderHuntsHomeList() {
     const venueId = row.dataset.venue;
     row.addEventListener('click', () => openEditor(huntId, venueId));
 
-    // Everything inside .hr-actions (the move button, and whatever it gets
-    // swapped for) needs clicks to stop here — otherwise they'd bubble up
-    // and also trigger the row's own navigate-to-editor listener above.
     const actionsEl = row.querySelector('.hr-actions');
     actionsEl.addEventListener('click', (e) => e.stopPropagation());
     actionsEl.querySelector('.btn-move-folder').addEventListener('click', () => {
@@ -1204,10 +995,6 @@ async function renderHuntsHomeList() {
   });
 }
 
-// Renders one venue's worth of folder groups — either as a standalone list
-// (single venue in focus) or as one labeled section among several (All
-// Venues), each with its own Add Folder button since a folder always
-// belongs to exactly one venue.
 function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHere, searching, showHeading) {
   const groups = new Map();
   venueHunts.forEach((h) => {
@@ -1308,10 +1095,6 @@ function openMoveFolderPicker(actionsEl, hunt) {
   })();
 }
 
-/* ---------------------------------------------------------------
-   Users view (administrators only)
------------------------------------------------------------------- */
-
 async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
@@ -1374,8 +1157,6 @@ async function renderUsersList() {
     switch (state.userFilter) {
       case 'admins': return u.isAdmin;
       case 'managers': return managesAnyVenue(u);
-      // "App Users" = a plain signed-in account with no elevated role yet —
-      // not managing any venue and not an administrator.
       case 'app': return !u.isAdmin && !managesAnyVenue(u);
       default: return true;
     }
@@ -1430,12 +1211,7 @@ async function renderUsersList() {
         const newName = input.value.trim();
         if (!newName) return;
         try {
-          // true: an admin manually setting this name is always authoritative,
-          // unlike a sign-in's best-effort/possibly-fallback name.
           await Store.upsertDirectoryEntry(u.userRecordName, newName, u.email, true);
-          // Editing your own row wouldn't otherwise show up until next
-          // sign-in, since the sidebar only reads CURRENT_MANAGER, not the
-          // directory record this just wrote to.
           if (u.userRecordName === CURRENT_MANAGER.userRecordName) {
             CURRENT_MANAGER.name = newName;
             CURRENT_MANAGER.hasRealName = true;
@@ -1558,13 +1334,6 @@ function confirmUnassignManager(user, venueId, venues) {
   });
 }
 
-/* ---------------------------------------------------------------
-   Settings view (administrators only)
------------------------------------------------------------------- */
-
-// Appearance/layout preferences only — personal to whoever's browser it is,
-// not CloudKit config, so every signed-in person can use this regardless
-// of role (unlike Users, which stays administrator-only).
 async function goToSettings() {
   state.venueId = null;
   state.huntId = null;
@@ -1611,10 +1380,6 @@ async function goToSettings() {
     sidebarToggle.setAttribute('aria-checked', String(next));
   });
 }
-
-/* ---------------------------------------------------------------
-   Hunts view
------------------------------------------------------------------- */
 
 let huntsCache = [];
 let huntClueCounts = {};
@@ -1698,10 +1463,6 @@ async function renderHuntsList() {
     row.addEventListener('click', () => openEditor(row.dataset.hunt, state.venueId));
   });
 }
-
-/* ---------------------------------------------------------------
-   Hunt editor
------------------------------------------------------------------- */
 
 async function openEditor(huntId, venueId) {
   state.venueId = venueId;
@@ -1902,7 +1663,6 @@ function renderClueList() {
       });
     }
 
-    // Drag reorder
     row.draggable = true;
     row.addEventListener('dragstart', (e) => {
       e.dataTransfer.effectAllowed = 'move';
@@ -2006,11 +1766,6 @@ function reorderClues(draggedId, targetId) {
   renderPreview();
 }
 
-// Always a random 20-character mix of capital letters, digits, and symbols —
-// managers can't type or edit this, it's only ever machine-generated. This
-// is the exact text that gets written to a physical NFC tag once one is
-// manufactured, so it deliberately excludes visually-ambiguous characters
-// (I/O and 0/1) even though it's meant to be copy-pasted, not hand-typed.
 const TAG_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const TAG_DIGITS = '23456789';
 const TAG_SYMBOLS = '!@#$%^&*+=?';
@@ -2020,9 +1775,6 @@ function generateTagID() {
   const all = TAG_LETTERS + TAG_DIGITS + TAG_SYMBOLS;
   const pick = (src) => src[Math.floor(Math.random() * src.length)];
 
-  // Guarantee at least one letter, one digit, and one symbol, then fill the
-  // rest randomly from the combined pool and shuffle so the guaranteed
-  // characters aren't always sitting in the first three positions.
   const chars = [pick(TAG_LETTERS), pick(TAG_DIGITS), pick(TAG_SYMBOLS)];
   while (chars.length < TAG_LENGTH) chars.push(pick(all));
   for (let i = chars.length - 1; i > 0; i--) {
@@ -2048,8 +1800,6 @@ function requestTagForClue(clue) {
     `Tag ID (must match exactly — matching is case-insensitive): ${clue.nfcTagID}`,
   ].join('\n');
 
-  // mailto: hands off to the OS mail client without navigating away from
-  // the page — no backend/email service needed for this.
   window.location.href = `mailto:${encodeURIComponent(TAG_REQUEST_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   clue.tagStatus = 'requested';
@@ -2057,10 +1807,6 @@ function requestTagForClue(clue) {
   renderPreview();
   showToast('mail', 'Tag Requested');
 }
-
-/* ---------------------------------------------------------------
-   Preview phone
------------------------------------------------------------------- */
 
 function renderPreview() {
   document.getElementById('pv-hunt-title').textContent = state.draft.title || 'Untitled Hunt';
@@ -2086,10 +1832,6 @@ function renderPreview() {
     bodyEl.textContent = 'Select or add a clue to preview it here.';
   }
 }
-
-/* ---------------------------------------------------------------
-   Save / delete hunt & clue confirmations
------------------------------------------------------------------- */
 
 async function saveHunt() {
   const title = state.draft.title.trim();
@@ -2180,10 +1922,6 @@ function confirmDeleteClue(clueId) {
   });
 }
 
-/* ---------------------------------------------------------------
-   Glass alert overlay + toast
------------------------------------------------------------------- */
-
 function showAlert({ icon: iconName, tone, title, message, actions }) {
   const overlay = document.getElementById('overlay');
   const card = document.getElementById('alert-card');
@@ -2215,12 +1953,8 @@ function showToast(iconName, message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
-/* ---------------------------------------------------------------
-   Sign in / out
------------------------------------------------------------------- */
-
-const signInBtn = document.getElementById('btn-signin');       // demo-mode-only custom button
-const ckAuthButton = document.getElementById('apple-sign-in-button'); // real CloudKit-injected button
+const signInBtn = document.getElementById('btn-signin');
+const ckAuthButton = document.getElementById('apple-sign-in-button');
 const signInFoot = document.getElementById('signin-foot');
 const demoBanner = document.getElementById('demo-banner');
 
@@ -2229,12 +1963,6 @@ async function handleSignedIn(identity) {
   await finishSignIn();
 }
 
-// Runs after CURRENT_MANAGER's identity (userRecordName/name/email) is set,
-// regardless of mock or real auth. Checks admin status and upserts this
-// person's directory entry (see config.js items 5-9) before routing —
-// both are best-effort: a failure here shouldn't block sign-in itself,
-// it just means they're treated as a non-admin and/or don't show up in
-// the admin Users list yet.
 async function finishSignIn() {
   try {
     CURRENT_MANAGER.isAdmin = await Store.checkIsAdmin(CURRENT_MANAGER.userRecordName);
@@ -2242,11 +1970,6 @@ async function finishSignIn() {
     console.warn('Could not check admin status:', err);
     CURRENT_MANAGER.isAdmin = false;
   }
-  // Apple only shares name/email on (roughly) the first authorization — a
-  // returning sign-in commonly comes back with neither, which would
-  // otherwise show the "User a1b2c3" placeholder every time even though a
-  // real name was captured (or manually set by an admin) previously. Prefer
-  // whatever's already in the directory before falling back to that.
   if (!CURRENT_MANAGER.hasRealName) {
     try {
       const existing = await Store.getDirectoryEntry(CURRENT_MANAGER.userRecordName);
@@ -2267,13 +1990,6 @@ async function finishSignIn() {
   await enterAfterSignIn();
 }
 
-// Managers are only ever assigned to one venue in practice, so skip the
-// venue grid and land straight on that venue's hunts. Still falls back to
-// the grid for the 0-venue ("not assigned yet") and >1-venue edge cases —
-// see the "All Venues" account-menu item / venues breadcrumb for the way
-// back if either of those ever comes up. Admins always land on the venues
-// grid (showing every venue) — auto-jumping into one particular venue
-// doesn't make sense once "all venues" is the point.
 async function enterAfterSignIn() {
   if (CURRENT_MANAGER.isAdmin) {
     await goToVenues();
@@ -2300,10 +2016,6 @@ function signOut() {
   CURRENT_MANAGER.email = '';
   CURRENT_MANAGER.isAdmin = false;
   if (!USE_MOCK) {
-    // Proxy to CloudKit's own (hidden) sign-out button, since CloudKit JS
-    // doesn't expose a plain programmatic "sign out" call — it's meant to be
-    // triggered by clicking the button it injects into #apple-sign-out-button.
-    // This is what makes watchSignOut() (below) resolve and re-arm sign-in.
     const realSignOutBtn = document.querySelector('#apple-sign-out-button *');
     if (realSignOutBtn) realSignOutBtn.click();
   }
@@ -2326,10 +2038,6 @@ if (USE_MOCK) {
   signInBtn.style.display = 'none';
   ckAuthButton.classList.add('visible');
 
-  // whenUserSignsIn()/whenUserSignsOut() are one-shot promises — each
-  // resolves exactly once, then is done. To support signing in, out, and
-  // back in again within one page load, re-subscribe after each event
-  // instead of attaching a single .then() at startup.
   function watchSignIn() {
     container.whenUserSignsIn().then((identity) => {
       handleSignedIn(identity);
@@ -2344,21 +2052,10 @@ if (USE_MOCK) {
       watchSignIn();
     }).catch((err) => {
       console.warn('CloudKit sign-out listener error:', err);
-      watchSignIn(); // still re-arm sign-in even if this listener itself errored
+      watchSignIn();
     });
   }
 
-  // setUpAuth() must run first — it's what actually injects the real button
-  // into the containers above, and it also resolves with the existing user
-  // if a persisted session cookie is still valid (auto-resume). Only start
-  // ONE watch chain based on its result (signed in -> watch for sign-out;
-  // not signed in -> watch for sign-in) so we never end up with two
-  // competing whenUserSignsIn()/whenUserSignsOut() subscriptions racing
-  // each other, which is what happens if you start watchSignIn() up front
-  // and then separately react to setUpAuth resolving with an identity too.
-  // If the token/environment/origin is wrong, this REJECTS (it does not
-  // just resolve null) and no button ever gets injected — that's the
-  // "no button shows up at all" failure mode, so surface it visibly.
   container.setUpAuth().then((identity) => {
     if (identity) {
       handleSignedIn(identity);
@@ -2377,10 +2074,6 @@ function showAuthError(err) {
   signInFoot.textContent = reason;
   signInFoot.style.color = 'var(--red)';
 }
-
-/* ---------------------------------------------------------------
-   Utils
------------------------------------------------------------------- */
 
 function escapeHTML(str) {
   return (str ?? '').replace(/[&<>"']/g, (m) => ({

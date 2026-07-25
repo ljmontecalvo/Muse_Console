@@ -1,10 +1,3 @@
-/* ---------------------------------------------------------------
-   Muse Console — design tokens
-   Plain, solid-surface dashboard look: white/near-black canvas, thin
-   hairline borders instead of blur, a persistent left sidebar, pill
-   buttons kept for their tactile roundness.
------------------------------------------------------------------- */
-
 :root {
   --accent: #007AFF;
   --accent-rgb: 0, 122, 255;
@@ -97,8 +90,6 @@ body {
 .icon { width: 1em; height: 1em; display: inline-block; vertical-align: -0.15em; }
 
 button { font: inherit; color: inherit; }
-
-/* ---------------- Surfaces (cards, panels, dropdowns) ---------------- */
 
 .glass {
   background: var(--surface);
@@ -214,15 +205,13 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 }
 .label-optional { text-transform: none; font-weight: 500; color: var(--text-tertiary); letter-spacing: 0; }
 
-/* ---------------- App shell (sidebar + main area) ---------------- */
-
 #app { min-height: 100%; display: flex; flex-direction: column; }
 
 .view { display: none; }
 .view.active { display: flex; flex-direction: column; flex: 1; }
 
 #app-shell {
-  display: none; /* toggled to 'flex' by JS once signed in */
+  display: none;
   flex: 1;
   min-height: 100vh;
 }
@@ -239,10 +228,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   transition: width 0.15s ease;
 }
 
-/* Collapsed sidebar is a desktop-only concept — on the mobile layout below,
-   the sidebar becomes a horizontal top bar and always shows full labels,
-   so this is scoped out of that breakpoint entirely rather than competing
-   with it on specificity. */
 @media (min-width: 861px) {
   .sidebar.collapsed { width: 64px; }
   .sidebar.collapsed .sidebar-brand { justify-content: center; padding: 8px; }
@@ -318,7 +303,7 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 }
 
 .page-header {
-  display: none; /* toggled by JS when there are breadcrumbs to show */
+  display: none;
   align-items: center;
   gap: 6px;
   padding: 16px 28px;
@@ -372,8 +357,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .content { flex: 1; padding: 28px 28px 48px; max-width: 1180px; width: 100%; margin: 0 auto; }
 
-/* ---------------- Sign in ---------------- */
-
 .signin-view { align-items: center; justify-content: center; min-height: 100vh; }
 .signin-card {
   width: min(380px, 92vw);
@@ -407,12 +390,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   min-height: 52px;
   align-items: center;
   justify-content: center;
-  /* CloudKit renders its own "Sign in with Apple ID" button in here (likely
-     an iframe) — we can't restyle its internals (font, exact padding,
-     corner radius) from this page, but clipping + rounding the container
-     at least keeps its corners visually consistent with the rest of the
-     card. Give it a touch more height than the button itself needs so its
-     text doesn't render cramped against the container edge. */
   overflow: hidden;
   border-radius: 10px;
 }
@@ -430,8 +407,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   line-height: 1.4;
 }
 
-/* ---------------- Loading / error states ---------------- */
-
 .loading-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; padding: 80px 20px; color: var(--text-secondary);
@@ -447,9 +422,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .empty-state.is-error .icon { color: var(--orange); }
 .empty-state .es-retry { margin-top: 6px; }
-
-
-/* ---------------- Section heading / search ---------------- */
 
 .section-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -479,8 +451,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   cursor: pointer;
 }
 .user-filter-select:focus { outline: none; border-color: var(--accent); }
-
-/* ---------------- Cards / grids ---------------- */
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 
@@ -523,8 +493,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .hunt-row .hr-meta { flex: none; display: flex; align-items: center; gap: 12px; }
 .hunt-row .hr-count { font-size: 12.5px; color: var(--text-tertiary); }
 
-/* ---- Folders (All Hunts screen) ---- */
-
 .folder-group { margin-bottom: 18px; }
 .folder-group:last-child { margin-bottom: 0; }
 
@@ -552,10 +520,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   padding: 10px 6px;
 }
 
-/* Groups an "All Venues" view of the hunts list into one section per
-   venue, each with its own folder groups and its own Add Folder button —
-   folders belong to exactly one venue, so there's no single button that
-   could add one without knowing which venue it's for. */
 .venue-section { margin-bottom: 28px; }
 .venue-section:last-child { margin-bottom: 0; }
 .venue-section-heading {
@@ -566,13 +530,8 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .venue-section-name { font-size: 16px; font-weight: 700; }
 .venue-add-folder { font-size: 12.5px; padding: 6px 12px; }
 
-/* Venue switcher at the top of the All Hunts screen — sized to its
-   content rather than the full-width default .folder-select gets in the
-   hunt editor. */
 .venue-filter-select { width: auto; min-width: 150px; }
 
-/* Inline "new folder name" row shown by the Add Folder button — same
-   shape as .folder-header so it slots in above the other groups. */
 .folder-header-creating {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 6px; margin-bottom: 8px;
@@ -582,8 +541,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 
 .hr-actions { flex: none; display: flex; align-items: center; gap: 10px; }
 
-/* Reuses .venue-picker's look (custom chevron, appearance:none) for the
-   Folder field in the hunt editor and the per-row "move to folder" picker. */
 .folder-select {
   appearance: none;
   -webkit-appearance: none;
@@ -601,8 +558,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   width: auto; max-width: 150px;
   font-size: 12.5px; padding: 6px 26px 6px 10px; border-radius: 8px;
 }
-
-/* ---- Users page (admin) ---- */
 
 .user-card {
   padding: 16px 18px;
@@ -659,8 +614,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .empty-state .es-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 .empty-state .es-desc { font-size: 14px; max-width: 320px; line-height: 1.4; }
 
-/* ---------------- Hunt editor ---------------- */
-
 .editor-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
@@ -681,8 +634,6 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .field { margin-bottom: 14px; }
 .field:last-child { margin-bottom: 0; }
 textarea.hunt-desc { min-height: 64px; }
-
-/* ---- Settings: appearance / layout ---- */
 
 .segmented-control {
   display: inline-flex;
@@ -754,8 +705,6 @@ textarea.hunt-desc { min-height: 64px; }
 
 .clue-detail-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 
-/* ---- Tag fulfillment status ---- */
-
 .status-badge {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   font-size: 11.5px; font-weight: 700;
@@ -805,8 +754,6 @@ textarea.hunt-desc { min-height: 64px; }
   padding: 14px 18px; margin-top: 6px;
 }
 
-/* ---------------- Preview phone ---------------- */
-
 .preview-col { position: sticky; top: 16px; }
 .phone-frame {
   border-radius: 34px;
@@ -846,8 +793,6 @@ textarea.hunt-desc { min-height: 64px; }
   font-size: 12.5px; font-weight: 700;
 }
 
-/* ---------------- Alert overlay ---------------- */
-
 .overlay {
   position: fixed; inset: 0; z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -878,8 +823,6 @@ textarea.hunt-desc { min-height: 64px; }
 .alert-actions .btn { flex: 1; justify-content: center; }
 .alert-tap-hint { font-size: 12px; color: var(--text-tertiary); margin-top: 8px; }
 
-/* ---------------- Toast ---------------- */
-
 .toast {
   position: fixed; left: 50%; bottom: 30px; z-index: 110;
   transform: translate(-50%, 10px);
@@ -892,8 +835,6 @@ textarea.hunt-desc { min-height: 64px; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast .icon { color: var(--green); }
-
-/* ---------------- Responsive ---------------- */
 
 @media (max-width: 860px) {
   #app-shell.open, #app-shell { flex-direction: column; height: auto; min-height: 100vh; }

@@ -5,21 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
 <script>
-  // Applied before the stylesheet paints anything, so a saved Light/Dark
-  // preference doesn't flash the wrong theme for a frame. "System" (no
-  // stored value, or the value "system") deliberately sets nothing here —
-  // the CSS's own prefers-color-scheme media query already handles that.
+
   (function () {
     var t = localStorage.getItem('museTheme');
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="stylesheet" href="styles.css?v=20260720c" />
+<link rel="stylesheet" href="styles.css?v=20260720d" />
 </head>
 <body>
 <div id="app">
 
-  <!-- ============ SIGN IN ============ -->
   <section id="view-signin" class="view signin-view active">
     <div class="signin-card glass">
       <div class="signin-mark">M</div>
@@ -28,11 +24,6 @@
       <button class="apple-btn" id="btn-signin">
          Sign in with Apple
       </button>
-      <!-- CloudKit JS injects its own real "Sign in with Apple ID" button into
-           this container after setUpAuth() runs — it must exist in the DOM
-           first. The custom black pill above is only shown in demo mode;
-           this one is shown (and the pill hidden) once a real API token is
-           configured. Do not remove either element. -->
       <div id="apple-sign-in-button" class="ck-auth-button"></div>
       <div id="apple-sign-out-button" style="display:none;"></div>
       <p class="signin-foot" id="signin-foot">Access is limited to managers assigned to a venue.</p>
@@ -40,7 +31,6 @@
     </div>
   </section>
 
-  <!-- ============ APP SHELL (sidebar + main area, shown once signed in) ============ -->
   <div id="app-shell">
 
     <aside class="sidebar" id="sidebar">
@@ -60,7 +50,6 @@
 
       <main class="page-content">
 
-        <!-- ============ VENUES ============ -->
         <section id="view-venues" class="view">
           <div class="content">
             <div class="section-head">
@@ -74,7 +63,6 @@
           </div>
         </section>
 
-        <!-- ============ ALL HUNTS (every venue you can access) ============ -->
         <section id="view-hunts-home" class="view">
           <div class="content">
             <div class="section-head">
@@ -89,7 +77,6 @@
           </div>
         </section>
 
-        <!-- ============ HUNTS (for a venue) ============ -->
         <section id="view-hunts" class="view">
           <div class="content">
             <div class="section-head">
@@ -103,7 +90,6 @@
           </div>
         </section>
 
-        <!-- ============ USERS (administrators only) ============ -->
         <section id="view-users" class="view">
           <div class="content">
             <div class="section-head">
@@ -123,7 +109,6 @@
           </div>
         </section>
 
-        <!-- ============ SETTINGS (appearance/layout — everyone) ============ -->
         <section id="view-settings" class="view">
           <div class="content">
             <div class="section-head">
@@ -133,7 +118,6 @@
           </div>
         </section>
 
-        <!-- ============ HUNT EDITOR ============ -->
         <section id="view-editor" class="view">
           <div class="content">
             <div class="section-head">
@@ -165,9 +149,7 @@
                     <span class="badge" id="clue-count-badge">0</span>
                   </p>
                   <div class="clue-list" id="clue-list"></div>
-                  <button class="btn add-clue-btn" id="btn-add-clue" style="margin-top:10px;">
-                    ${'' /* filled by JS */}
-                  </button>
+                  <button class="btn add-clue-btn" id="btn-add-clue" style="margin-top:10px;"></button>
                 </div>
 
                 <div class="editor-footer glass">
@@ -207,22 +189,16 @@
 
 </div>
 
-<!-- ============ Alert overlay (confirm / feedback) ============ -->
 <div class="overlay" id="overlay">
   <div class="overlay-scrim" id="overlay-scrim"></div>
   <div class="alert-card glass-strong" id="alert-card"></div>
 </div>
 
-<!-- ============ Toast ============ -->
 <div class="toast glass-strong" id="toast"></div>
 
-<!-- Bump the ?v= on these (and the styles.css link in <head>) every time any
-     of these files change and get redeployed — Cloudflare caches .js/.css
-     at the edge, and without a version bump some visitors will keep getting
-     a stale cached copy after a deploy until the cache naturally expires. -->
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260720c"></script>
-<script src="icons.js?v=20260720c"></script>
-<script src="app.js?v=20260720c"></script>
+<script src="config.js?v=20260720d"></script>
+<script src="icons.js?v=20260720d"></script>
+<script src="app.js?v=20260720d"></script>
 </body>
 </html>

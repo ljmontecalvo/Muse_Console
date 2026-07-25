@@ -1,5 +1,3 @@
-// Minimal inline SF-Symbols-style icon set (stroke-based, rounded) so the
-// console has zero external dependencies and works fully offline.
 const ICONS = {
   map: '<path d="M9 3 3 5v16l6-2 6 2 6-2V3l-6 2-6-2Z"/><path d="M9 3v16"/><path d="M15 5v16"/>',
   lightbulb: '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2.3h6c0-1.1.4-1.8 1-2.3A7 7 0 0 0 12 2Z"/>',
