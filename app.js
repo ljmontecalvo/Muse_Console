@@ -216,12 +216,16 @@ function recordToClue(r) {
 const CloudKitStore = {
 
   async checkIsAdmin(userRecordName) {
+    // Routed through the backend rather than reading the native Users type directly —
+    // checking someone ELSE's admin status now requires the caller to already be an
+    // admin (checked server-side), closing off arbitrary-user enumeration. Self-checks
+    // (the common case, at sign-in) are always allowed.
     try {
-      const response = await publicDB.fetchRecords(userRecordName);
-      if (response.hasErrors) return false;
-      const rec = response.records && response.records[0];
-      const val = rec && rec.fields && rec.fields.isMuseAdministrator && rec.fields.isMuseAdministrator.value;
-      return val === 1;
+      const resp = await apiPost('/api/users/check-admin', {
+        callerUserRecordName: CURRENT_MANAGER.userRecordName,
+        targetUserRecordName: userRecordName,
+      });
+      return resp.isAdmin === true;
     } catch (err) {
       console.warn('checkIsAdmin failed:', err);
       return false;
