@@ -398,7 +398,19 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   border-color: #000 !important;
   border-radius: 10px !important;
 }
-.ck-auth-button .apple-auth-button svg { fill: #fff !important; }
+/* Apple's own inline style horizontally centers this SVG logo/text with
+   position:relative; left:50% — but that 50% is computed against the
+   button's full width without accounting for the SVG's own width, so it
+   overshoots and crowds the right edge. left's the only axis that's off
+   (top:50% already lands correctly); verified empirically against the
+   live button (getBoundingClientRect alone is misleading here since the
+   SVG paints via overflow:visible from an off-origin path — confirmed
+   the real fix by comparing rendered screenshots, not just computed
+   geometry). */
+.ck-auth-button .apple-auth-button svg {
+  left: calc(50% - 19px) !important;
+  fill: #fff !important;
+}
 @media (prefers-color-scheme: dark) {
   .ck-auth-button .apple-auth-button {
     background-color: #fff !important;
