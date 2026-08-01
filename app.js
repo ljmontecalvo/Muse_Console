@@ -1246,9 +1246,15 @@ async function goToStats() {
   await renderStatsView();
 }
 
+// Cache of the last successful load, so expanding/collapsing a venue or
+// folder group can just re-render from memory instead of re-fetching from
+// the network (and flashing the loading state) on every click.
+let statsDataCache = null;
+
 async function renderStatsView() {
   const bodyEl = document.getElementById('stats-body');
   bodyEl.innerHTML = loadingHTML('Loading statistics…');
+  statsDataCache = null;
 
   let venues = [];
   try {
@@ -1317,6 +1323,15 @@ async function renderStatsView() {
     return;
   }
 
+  statsDataCache = { venues, stats };
+  renderStatsBody();
+}
+
+function renderStatsBody() {
+  if (!statsDataCache) return;
+  const { venues, stats } = statsDataCache;
+  const bodyEl = document.getElementById('stats-body');
+
   bodyEl.innerHTML = `
     <div class="stats-kpi-row">
       ${statTileHTML('Hunts Started', stats.totals.starts)}
@@ -1333,6 +1348,8 @@ async function renderStatsView() {
     </div>
   `;
 
+  // Purely a local UI toggle — re-render from the cached data above rather
+  // than calling renderStatsView(), which would re-fetch over the network.
   bodyEl.querySelectorAll('.stats-collapse-toggle').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.collapseKey;
@@ -1341,7 +1358,7 @@ async function renderStatsView() {
       } else {
         state.collapsedStatsGroups.add(key);
       }
-      renderStatsView();
+      renderStatsBody();
     });
   });
 }
