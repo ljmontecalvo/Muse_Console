@@ -1819,14 +1819,27 @@ const TAG_DIGITS = '23456789';
 const TAG_SYMBOLS = '!@#$%^&*+=?';
 const TAG_LENGTH = 20;
 
+// Uniform random integer in [0, maxExclusive) via crypto.getRandomValues, with
+// rejection sampling so the result isn't modulo-biased toward smaller values.
+function secureRandomInt(maxExclusive) {
+  const buf = new Uint32Array(1);
+  const limit = 0x100000000 - (0x100000000 % maxExclusive);
+  let x;
+  do {
+    crypto.getRandomValues(buf);
+    x = buf[0];
+  } while (x >= limit);
+  return x % maxExclusive;
+}
+
 function generateTagID() {
   const all = TAG_LETTERS + TAG_DIGITS + TAG_SYMBOLS;
-  const pick = (src) => src[Math.floor(Math.random() * src.length)];
+  const pick = (src) => src[secureRandomInt(src.length)];
 
   const chars = [pick(TAG_LETTERS), pick(TAG_DIGITS), pick(TAG_SYMBOLS)];
   while (chars.length < TAG_LENGTH) chars.push(pick(all));
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = secureRandomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
   return chars.join('');
