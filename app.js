@@ -546,8 +546,10 @@ function renderSidebar() {
           <div class="e">${escapeHTML(CURRENT_MANAGER.email)}</div>
         </div>
         <div class="dropdown-divider"></div>
-        <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
-        <div class="dropdown-divider"></div>
+        ${CURRENT_MANAGER.isAdmin ? `
+          <button class="dropdown-item" id="menu-copy-id">${icon('tag')} Copy My Manager ID</button>
+          <div class="dropdown-divider"></div>
+        ` : ''}
         <button class="dropdown-item danger" id="menu-signout">${icon('close')} Sign Out</button>
       </div>
     </div>
@@ -558,15 +560,20 @@ function renderSidebar() {
     el.querySelector('#account-dropdown').classList.toggle('open');
   });
   el.querySelector('#menu-signout').addEventListener('click', () => { closeAccountMenus(); signOut(); });
-  el.querySelector('#menu-copy-id').addEventListener('click', async () => {
-    closeAccountMenus();
-    try {
-      await navigator.clipboard.writeText(CURRENT_MANAGER.userRecordName || '');
-      showToast('checkCircle', 'Manager ID Copied');
-    } catch {
-      showToast('tag', CURRENT_MANAGER.userRecordName || 'No ID available');
-    }
-  });
+  // IDs (CloudKit userRecordNames) are only useful for admin CloudKit Dashboard setup
+  // work — managers/app users never need to see or copy their own.
+  const copyIdBtn = el.querySelector('#menu-copy-id');
+  if (copyIdBtn) {
+    copyIdBtn.addEventListener('click', async () => {
+      closeAccountMenus();
+      try {
+        await navigator.clipboard.writeText(CURRENT_MANAGER.userRecordName || '');
+        showToast('checkCircle', 'Manager ID Copied');
+      } catch {
+        showToast('tag', CURRENT_MANAGER.userRecordName || 'No ID available');
+      }
+    });
+  }
 }
 
 function setActiveNav() {
@@ -2011,10 +2018,13 @@ function showAlert({ icon: iconName, tone, title, message, actions }) {
   overlay.classList.add('open');
 }
 
+let overlayBlocking = false;
 function closeOverlay() {
   document.getElementById('overlay').classList.remove('open');
 }
-document.getElementById('overlay-scrim').addEventListener('click', closeOverlay);
+document.getElementById('overlay-scrim').addEventListener('click', () => {
+  if (!overlayBlocking) closeOverlay();
+});
 
 let toastTimer = null;
 function showToast(iconName, message) {
@@ -2053,6 +2063,19 @@ async function finishSignIn() {
       console.warn('Could not look up existing directory entry:', err);
     }
   }
+
+  // Apple didn't share a name and there's no previously-saved one either — this is
+  // effectively a first sign-in. Block entry until they give us a real name, so the
+  // directory (and the CloudKit dashboard) never has an "Unnamed" entry again.
+  if (!CURRENT_MANAGER.hasRealName) {
+    promptForName();
+    return;
+  }
+
+  await continueSignIn();
+}
+
+async function continueSignIn() {
   try {
     await Store.upsertDirectoryEntry(CURRENT_MANAGER.userRecordName, CURRENT_MANAGER.name, CURRENT_MANAGER.email, CURRENT_MANAGER.hasRealName);
   } catch (err) {
@@ -2060,6 +2083,49 @@ async function finishSignIn() {
   }
   renderSidebar();
   await enterAfterSignIn();
+}
+
+function promptForName() {
+  const card = document.getElementById('alert-card');
+  card.innerHTML = `
+    <div class="alert-icon">${icon('person')}</div>
+    <h2 class="alert-title">Welcome — what's your name?</h2>
+    <p class="alert-msg">Enter your own name, not a venue's — this is how admins and other managers will identify <em>you</em> in the console, for example when assigning you to a venue.</p>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Your Full Name</label>
+      <input type="text" id="name-prompt-input" placeholder="e.g. Jamie Rivera (your name, not the venue's)" />
+    </div>
+    <p class="alert-msg" id="name-prompt-error" style="display:none;color:var(--red);"></p>
+    <div class="alert-actions">
+      <button class="btn btn-prominent" type="button" id="name-prompt-continue">Continue</button>
+    </div>
+  `;
+  overlayBlocking = true;
+  document.getElementById('overlay').classList.add('open');
+
+  const input = document.getElementById('name-prompt-input');
+  const errorEl = document.getElementById('name-prompt-error');
+  const continueBtn = document.getElementById('name-prompt-continue');
+  input.focus();
+
+  const submit = async () => {
+    const name = input.value.trim();
+    if (!name) {
+      errorEl.textContent = 'Please enter your name to continue.';
+      errorEl.style.display = '';
+      input.focus();
+      return;
+    }
+    continueBtn.disabled = true;
+    continueBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Continuing…`;
+    CURRENT_MANAGER.name = name;
+    CURRENT_MANAGER.hasRealName = true;
+    overlayBlocking = false;
+    closeOverlay();
+    await continueSignIn();
+  };
+  continueBtn.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
 }
 
 async function enterAfterSignIn() {
