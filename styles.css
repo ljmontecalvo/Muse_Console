@@ -390,12 +390,22 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   height: 48px;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  border-radius: 10px;
-  border: 1px solid var(--border);
 }
 .ck-auth-button.visible { display: flex; }
-.ck-auth-button iframe { display: block; width: 100% !important; height: 100% !important; }
+
+.ck-auth-button .apple-auth-button {
+  background-color: #000 !important;
+  border-color: #000 !important;
+  border-radius: 10px !important;
+}
+.ck-auth-button .apple-auth-button svg { fill: #fff !important; }
+@media (prefers-color-scheme: dark) {
+  .ck-auth-button .apple-auth-button {
+    background-color: #fff !important;
+    border-color: #fff !important;
+  }
+  .ck-auth-button .apple-auth-button svg { fill: #000 !important; }
+}
 
 .demo-banner {
   margin-top: 14px;
