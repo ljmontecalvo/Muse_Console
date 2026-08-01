@@ -148,6 +148,10 @@ function folderRegistryRecordName(venueId) {
   return 'folder_registry_' + venueId;
 }
 
+function clueTagRecordName(clueRecordName) {
+  return 'cluetag_' + clueRecordName;
+}
+
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
     console.warn('CloudKit request had errors:', response.errors);
@@ -184,7 +188,8 @@ function recordToClue(r) {
     order: r.fields.order && r.fields.order.value,
     title: r.fields.title && r.fields.title.value,
     body: r.fields.body && r.fields.body.value,
-    nfcTagID: r.fields.nfcTagID && r.fields.nfcTagID.value,
+    // nfcTagID intentionally lives on the separate ClueTag record type (not World/Authenticated
+    // readable) — CloudKitStore.cluesForHunt merges it in from a batch ClueTag fetch below.
     tagStatus: (r.fields.tagStatus && r.fields.tagStatus.value) || 'pending',
     huntId: r.fields.huntReference && r.fields.huntReference.value && r.fields.huntReference.value.recordName,
   };
@@ -328,7 +333,25 @@ const CloudKitStore = {
       sortBy: [{ fieldName: 'order', ascending: true }],
     });
     assertNoErrors(response);
-    return response.records.map(recordToClue).sort((a, b) => a.order - b.order);
+    const clues = response.records.map(recordToClue).sort((a, b) => a.order - b.order);
+    if (!clues.length) return clues;
+
+    // nfcTagID lives on the separate ClueTag type, readable only by managers in the
+    // Museum Managers CloudKit role (see CLOUDKIT_SETUP.md) — not World/Authenticated.
+    // A manager without that role gets tagsByClueId misses here, not a hard failure.
+    const tagResp = await publicDB.fetchRecords(clues.map(c => clueTagRecordName(c.id)));
+    const tagsByClueId = {};
+    (tagResp.records || []).forEach((r) => {
+      if (!r || r.serverErrorCode) return;
+      const clueId = r.fields.clueReference && r.fields.clueReference.value && r.fields.clueReference.value.recordName;
+      if (clueId) tagsByClueId[clueId] = { nfcTagID: r.fields.nfcTagID && r.fields.nfcTagID.value, recordChangeTag: r.recordChangeTag };
+    });
+
+    return clues.map(c => ({
+      ...c,
+      nfcTagID: (tagsByClueId[c.id] && tagsByClueId[c.id].nfcTagID) || null,
+      tagRecordChangeTag: tagsByClueId[c.id] && tagsByClueId[c.id].recordChangeTag,
+    }));
   },
 
   async saveHunt(huntId, venueId, data, clueList, originalClueIds, huntChangeTag) {
@@ -349,36 +372,61 @@ const CloudKitStore = {
     const currentIds = new Set(clueList.filter(c => c.id && !c.id.startsWith('draft_')).map(c => c.id));
     const toDelete = [...(originalClueIds || [])].filter(id => !currentIds.has(id));
 
-    const toSave = clueList.map((c, i) => {
+    const toSave = [];
+    clueList.forEach((c, i) => {
       const isNew = !c.id || c.id.startsWith('draft_');
-      const record = {
+      const clueRecordName = isNew ? ('clue_' + crypto.randomUUID()) : c.id;
+
+      const clueRecord = {
         recordType: 'Clue',
         fields: {
           title: { value: c.title },
           body: { value: c.body },
-          nfcTagID: { value: c.nfcTagID },
           tagStatus: { value: c.tagStatus || 'pending' },
           order: { value: i },
           huntReference: { value: ckRefSave(finalHuntId) },
         },
       };
       if (!isNew) {
-        record.recordName = c.id;
-        record.recordChangeTag = c.recordChangeTag;
-        record.operationType = 'update';
+        clueRecord.recordName = clueRecordName;
+        clueRecord.recordChangeTag = c.recordChangeTag;
+        clueRecord.operationType = 'update';
+      } else {
+        clueRecord.recordName = clueRecordName;
       }
-      return record;
+      toSave.push(clueRecord);
+
+      // nfcTagID lives on the separate ClueTag type (see cluesForHunt) so it's never
+      // World/Authenticated readable — save it alongside the Clue in the same batch.
+      const tagRecord = {
+        recordType: 'ClueTag',
+        recordName: clueTagRecordName(clueRecordName),
+        fields: {
+          nfcTagID: { value: c.nfcTagID },
+          clueReference: { value: ckRefSave(clueRecordName) },
+        },
+      };
+      if (c.tagRecordChangeTag) {
+        tagRecord.recordChangeTag = c.tagRecordChangeTag;
+        tagRecord.operationType = 'update';
+      }
+      toSave.push(tagRecord);
     });
 
     if (toSave.length) assertNoErrors(await publicDB.saveRecords(toSave));
-    if (toDelete.length) assertNoErrors(await publicDB.deleteRecords(toDelete));
+    if (toDelete.length) {
+      assertNoErrors(await publicDB.deleteRecords([...toDelete, ...toDelete.map(clueTagRecordName)]));
+    }
 
     return finalHuntId;
   },
 
   async deleteHunt(huntId) {
     const clues = await this.cluesForHunt(huntId);
-    if (clues.length) assertNoErrors(await publicDB.deleteRecords(clues.map(c => c.id)));
+    if (clues.length) {
+      const clueIds = clues.map(c => c.id);
+      assertNoErrors(await publicDB.deleteRecords([...clueIds, ...clueIds.map(clueTagRecordName)]));
+    }
     assertNoErrors(await publicDB.deleteRecords([huntId]));
   },
 
@@ -1732,7 +1780,7 @@ function clueRowHTML(c, index) {
         <div class="field">
           <label class="label">NFC Tag</label>
           <div class="tag-display-row">
-            <code class="clue-tag-code">${escapeHTML(c.nfcTagID)}</code>
+            <code class="clue-tag-code">${c.nfcTagID ? escapeHTML(c.nfcTagID) : 'Unavailable — ask an admin for Museum Managers access'}</code>
             <button class="btn btn-icon btn-copy-tag" type="button" title="Copy tag ID">${icon('copy')}</button>
           </div>
           <p class="tag-hint">Generated automatically — can't be typed in. A physical tag has to be manufactured with this exact code before it'll work at the exhibit.</p>
@@ -1771,20 +1819,37 @@ const TAG_DIGITS = '23456789';
 const TAG_SYMBOLS = '!@#$%^&*+=?';
 const TAG_LENGTH = 20;
 
+// Uniform random integer in [0, maxExclusive) via crypto.getRandomValues, with
+// rejection sampling so the result isn't modulo-biased toward smaller values.
+function secureRandomInt(maxExclusive) {
+  const buf = new Uint32Array(1);
+  const limit = 0x100000000 - (0x100000000 % maxExclusive);
+  let x;
+  do {
+    crypto.getRandomValues(buf);
+    x = buf[0];
+  } while (x >= limit);
+  return x % maxExclusive;
+}
+
 function generateTagID() {
   const all = TAG_LETTERS + TAG_DIGITS + TAG_SYMBOLS;
-  const pick = (src) => src[Math.floor(Math.random() * src.length)];
+  const pick = (src) => src[secureRandomInt(src.length)];
 
   const chars = [pick(TAG_LETTERS), pick(TAG_DIGITS), pick(TAG_SYMBOLS)];
   while (chars.length < TAG_LENGTH) chars.push(pick(all));
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = secureRandomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
   return chars.join('');
 }
 
 function requestTagForClue(clue) {
+  if (!clue.nfcTagID) {
+    showToast('triangleExclaim', "Tag code unavailable — you need Museum Managers access to request this tag");
+    return;
+  }
   const venue = venuesCache.find(v => v.id === state.venueId);
   const venueName = (venue && venue.name) || 'Venue';
   const huntTitle = state.draft.title.trim() || 'Untitled Hunt';
@@ -1843,7 +1908,7 @@ async function saveHunt() {
     });
     return;
   }
-  const emptyClue = state.draft.clues.find(c => !c.title.trim() || !c.body.trim() || !c.nfcTagID.trim());
+  const emptyClue = state.draft.clues.find(c => !c.title.trim() || !c.body.trim() || !c.nfcTagID || !c.nfcTagID.trim());
   if (emptyClue) {
     state.expandedClueId = emptyClue.id;
     renderClueList();
