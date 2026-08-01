@@ -152,6 +152,24 @@ function clueTagRecordName(clueRecordName) {
   return 'cluetag_' + clueRecordName;
 }
 
+// Hunt/Clue/ClueTag/AppUser writes go through these backend endpoints instead of
+// straight to CloudKit — CloudKit's role model can't express "only this venue's
+// managers," so the venue-scoping check happens server-side against the S2S key.
+// See functions/api/ and CLOUDKIT_SETUP.md.
+async function apiPost(path, body) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let json;
+  try { json = await resp.json(); } catch { json = null; }
+  if (!resp.ok || !json || json.ok === false) {
+    throw new Error((json && (json.message || json.error)) || `Request failed (${resp.status})`);
+  }
+  return json;
+}
+
 function assertNoErrors(response) {
   if (response && response.hasErrors) {
     console.warn('CloudKit request had errors:', response.errors);
@@ -211,23 +229,11 @@ const CloudKitStore = {
   },
 
   async upsertDirectoryEntry(userRecordName, name, email, hasRealName) {
-    const recordName = 'appuser_' + userRecordName;
-    let existing = null;
-    const fetchResp = await publicDB.fetchRecords(recordName);
-    if (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) {
-      existing = fetchResp.records[0];
-    }
-
-    const fields = { userRecordName: { value: userRecordName } };
-    if (hasRealName) fields.name = { value: name };
-    if (email) fields.email = { value: email };
-
-    const record = existing
-      ? { recordName, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'AppUser', fields }
-      : { recordName, recordType: 'AppUser', fields };
-
-    const response = await publicDB.saveRecords([record]);
-    assertNoErrors(response);
+    await apiPost('/api/users/upsert', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      targetUserRecordName: userRecordName,
+      name, email, hasRealName,
+    });
   },
 
   async allUsers() {
@@ -355,79 +361,20 @@ const CloudKitStore = {
   },
 
   async saveHunt(huntId, venueId, data, clueList, originalClueIds, huntChangeTag) {
-    const huntRecord = huntId
-      ? {
-          recordName: huntId,
-          recordChangeTag: huntChangeTag,
-          operationType: 'update',
-          recordType: 'Hunt',
-          fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' } },
-        }
-      : { recordType: 'Hunt', fields: { title: { value: data.title }, description: { value: data.description }, folder: { value: data.folder || '' }, venueReference: { value: ckRefSave(venueId) } } };
-
-    const huntResp = await publicDB.saveRecords([huntRecord]);
-    assertNoErrors(huntResp);
-    const finalHuntId = huntResp.records[0].recordName;
-
-    const currentIds = new Set(clueList.filter(c => c.id && !c.id.startsWith('draft_')).map(c => c.id));
-    const toDelete = [...(originalClueIds || [])].filter(id => !currentIds.has(id));
-
-    const toSave = [];
-    clueList.forEach((c, i) => {
-      const isNew = !c.id || c.id.startsWith('draft_');
-      const clueRecordName = isNew ? ('clue_' + crypto.randomUUID()) : c.id;
-
-      const clueRecord = {
-        recordType: 'Clue',
-        fields: {
-          title: { value: c.title },
-          body: { value: c.body },
-          tagStatus: { value: c.tagStatus || 'pending' },
-          order: { value: i },
-          huntReference: { value: ckRefSave(finalHuntId) },
-        },
-      };
-      if (!isNew) {
-        clueRecord.recordName = clueRecordName;
-        clueRecord.recordChangeTag = c.recordChangeTag;
-        clueRecord.operationType = 'update';
-      } else {
-        clueRecord.recordName = clueRecordName;
-      }
-      toSave.push(clueRecord);
-
-      // nfcTagID lives on the separate ClueTag type (see cluesForHunt) so it's never
-      // World/Authenticated readable — save it alongside the Clue in the same batch.
-      const tagRecord = {
-        recordType: 'ClueTag',
-        recordName: clueTagRecordName(clueRecordName),
-        fields: {
-          nfcTagID: { value: c.nfcTagID },
-          clueReference: { value: ckRefSave(clueRecordName) },
-        },
-      };
-      if (c.tagRecordChangeTag) {
-        tagRecord.recordChangeTag = c.tagRecordChangeTag;
-        tagRecord.operationType = 'update';
-      }
-      toSave.push(tagRecord);
+    const resp = await apiPost('/api/hunts/save', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      huntId, venueId, huntChangeTag, data,
+      clues: clueList,
+      originalClueIds: [...(originalClueIds || [])],
     });
-
-    if (toSave.length) assertNoErrors(await publicDB.saveRecords(toSave));
-    if (toDelete.length) {
-      assertNoErrors(await publicDB.deleteRecords([...toDelete, ...toDelete.map(clueTagRecordName)]));
-    }
-
-    return finalHuntId;
+    return resp.huntId;
   },
 
   async deleteHunt(huntId) {
-    const clues = await this.cluesForHunt(huntId);
-    if (clues.length) {
-      const clueIds = clues.map(c => c.id);
-      assertNoErrors(await publicDB.deleteRecords([...clueIds, ...clueIds.map(clueTagRecordName)]));
-    }
-    assertNoErrors(await publicDB.deleteRecords([huntId]));
+    await apiPost('/api/hunts/delete', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      huntId,
+    });
   },
 
   async allFolders(venueId) {
@@ -444,27 +391,17 @@ const CloudKitStore = {
   async addFolder(venueId, name) {
     const trimmed = (name || '').trim();
     if (!trimmed) return;
-    const recordName = folderRegistryRecordName(venueId);
-    const fetchResp = await publicDB.fetchRecords(recordName);
-    const existing = (!fetchResp.hasErrors && fetchResp.records && fetchResp.records[0]) || null;
-    const current = (existing && existing.fields.names && existing.fields.names.value) || [];
-    if (current.some(f => f.toLowerCase() === trimmed.toLowerCase())) return;
-    const updated = [...current, trimmed];
-    const record = existing
-      ? { recordName, recordChangeTag: existing.recordChangeTag, operationType: 'update', recordType: 'FolderRegistry', fields: { names: { value: updated } } }
-      : { recordName, recordType: 'FolderRegistry', fields: { names: { value: updated } } };
-    assertNoErrors(await publicDB.saveRecords([record]));
+    await apiPost('/api/folders/add', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      venueId, name: trimmed,
+    });
   },
 
   async setHuntFolder(huntId, recordChangeTag, folder) {
-    const response = await publicDB.saveRecords([{
-      recordName: huntId,
-      recordChangeTag,
-      operationType: 'update',
-      recordType: 'Hunt',
-      fields: { folder: { value: folder || '' } },
-    }]);
-    assertNoErrors(response);
+    await apiPost('/api/hunts/set-folder', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      huntId, recordChangeTag, folder,
+    });
   },
 };
 

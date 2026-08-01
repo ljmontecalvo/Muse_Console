@@ -776,6 +776,18 @@ textarea.hunt-desc { min-height: 64px; }
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 14px 18px; margin-top: 6px;
 }
+/* Content keeps scrolling underneath the sticky footer — this fades it out
+   into the page background just before it would get hard-clipped by the
+   footer's own edge, instead of visibly cutting a clue row in half. */
+.editor-footer::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 100%;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--bg-canvas));
+  pointer-events: none;
+}
 
 .preview-col { position: sticky; top: 16px; }
 .phone-frame {
