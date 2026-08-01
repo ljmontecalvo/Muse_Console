@@ -882,14 +882,42 @@ textarea.hunt-desc { min-height: 64px; }
 
 .stats-chart-svg { width: 100%; height: auto; display: block; }
 
-.stats-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-.stats-table th {
-  text-align: left; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+/* Hunts grouped by venue (when there's more than one) and folder. */
+.stats-grouped-cols {
+  display: grid; grid-template-columns: 1fr 70px 100px 120px; gap: 10px;
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-tertiary); padding: 0 10px 10px; border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
 }
-.stats-table td { padding: 10px; border-bottom: 1px solid var(--border); }
-.stats-table tr:last-child td { border-bottom: none; }
-.stats-table th:not(:first-child), .stats-table td:not(:first-child) { text-align: right; }
+.stats-grouped-cols span:not(:first-child) { text-align: right; }
+
+.stats-venue-group {
+  border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden;
+  margin-bottom: 14px;
+}
+.stats-venue-group:last-child { margin-bottom: 0; }
+.stats-venue-header {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 12px 14px;
+  background: var(--surface-hover); border: none; cursor: pointer;
+  color: var(--text-primary); font: inherit;
+}
+.stats-venue-header:hover { color: var(--accent); }
+.stats-venue-header .icon { width: 17px; height: 17px; color: var(--text-tertiary); flex: none; }
+.stats-venue-header:hover .icon { color: var(--accent); }
+.stats-venue-name { font-size: 14.5px; font-weight: 700; }
+.stats-venue-body { padding: 12px 14px 4px; }
+.stats-venue-group.collapsed .stats-venue-header .folder-chevron { transform: rotate(-90deg); }
+.stats-venue-group.collapsed .stats-venue-body { display: none; }
+
+.stats-hunt-row {
+  display: grid; grid-template-columns: 1fr 70px 100px 120px; gap: 10px; align-items: center;
+  padding: 8px 6px; font-size: 13.5px; border-bottom: 1px solid var(--border);
+}
+.stats-hunt-row:last-child { border-bottom: none; }
+.stats-hunt-row span:not(:first-child) { text-align: right; }
+.stats-hunt-row .shr-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 860px) {
   #app-shell.open, #app-shell { flex-direction: column; height: auto; min-height: 100vh; }

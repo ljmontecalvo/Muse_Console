@@ -80,6 +80,8 @@ const MockStore = (() => {
       perHunt.push({
         huntId: h.id,
         title: h.title,
+        venueId: h.venueId,
+        folder: h.folder || '',
         starts: totalStarts,
         completions: totalCompletions,
         completionRate: totalStarts > 0 ? Math.round((totalCompletions / totalStarts) * 100) : 0,
@@ -183,7 +185,16 @@ const MockStore = (() => {
     },
     async getStats(venueId, days) {
       if (!statsCache) statsCache = generateFakeStats();
-      const scopedHuntIds = new Set(hunts.filter(h => !venueId || h.venueId === venueId).map(h => h.id));
+      // Mirror the real backend's authorization (functions/api/stats/summary.js):
+      // "all venues" for a manager means all venues *they* manage, not every venue.
+      const allowedVenueIds = new Set(
+        CURRENT_MANAGER.isAdmin
+          ? venues.map(v => v.id)
+          : venues.filter(v => v.managers.includes(CURRENT_MANAGER.userRecordName)).map(v => v.id)
+      );
+      const scopedHuntIds = new Set(
+        hunts.filter(h => allowedVenueIds.has(h.venueId) && (!venueId || h.venueId === venueId)).map(h => h.id)
+      );
       const perHunt = statsCache.perHunt.filter(p => scopedHuntIds.has(p.huntId));
 
       const totals = perHunt.reduce((acc, p) => {
@@ -519,6 +530,10 @@ const state = {
   huntsHomeVenueFilter: '',
   statsVenueFilter: '',
   statsTimeframeDays: 30,
+  // Separate from collapsedHuntFolders (the Hunts screens' own state) since the
+  // "venue:<id>" and "venue:<id>::folder:<name>" keys used here would otherwise
+  // collide with that screen's per-folder collapse keys.
+  collapsedStatsGroups: new Set(),
   // Which sidebar item should read as active. Set explicitly by each nav
   // entry point (goToVenues/goToHuntsHome/goToUsers/goToSettings) rather
   // than inferred from the current view name, since view-hunts (a single
@@ -1314,7 +1329,107 @@ async function renderStatsView() {
     </div>
     <div class="panel glass">
       <p class="panel-title">By Hunt</p>
-      ${perHuntTableHTML(stats.perHunt)}
+      ${statsGroupedHTML(stats.perHunt, venues)}
+    </div>
+  `;
+
+  bodyEl.querySelectorAll('.stats-collapse-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.collapseKey;
+      if (state.collapsedStatsGroups.has(key)) {
+        state.collapsedStatsGroups.delete(key);
+      } else {
+        state.collapsedStatsGroups.add(key);
+      }
+      renderStatsView();
+    });
+  });
+}
+
+// Hunts grouped by venue (collapsible), then by the folder each hunt has been
+// filed into within that venue — mirrors the folder structure both admins and
+// managers already see on the Hunts screens, so a hunt's stats live in the
+// same place its editor does. A single-venue manager just gets one group.
+function statsGroupedHTML(perHunt, venues) {
+  const byVenue = new Map();
+  perHunt.forEach((h) => {
+    if (!byVenue.has(h.venueId)) byVenue.set(h.venueId, []);
+    byVenue.get(h.venueId).push(h);
+  });
+
+  // Walk venues in the same order the rest of the console lists them, skipping
+  // any venue with no hunts in this stats result.
+  const orderedVenues = venues.filter((v) => byVenue.has(v.id));
+  // A single venue (a one-venue manager, or an admin filtered to one venue)
+  // doesn't need its own collapsible wrapper — just show its folders directly,
+  // same as the per-venue Hunts screen does.
+  const showVenueHeadings = orderedVenues.length > 1;
+
+  return `
+    <div class="stats-grouped-cols">
+      <span>Hunt</span><span>Starts</span><span>Completions</span><span>Completion Rate</span>
+    </div>
+    ${orderedVenues.map((venue) => {
+      const venueKey = `venue:${venue.id}`;
+      const foldersHTML = statsFolderGroupsHTML(venueKey, byVenue.get(venue.id));
+
+      if (!showVenueHeadings) return foldersHTML;
+
+      const venueCollapsed = state.collapsedStatsGroups.has(venueKey);
+      const venueStarts = byVenue.get(venue.id).reduce((sum, h) => sum + h.starts, 0);
+      return `
+        <div class="stats-venue-group ${venueCollapsed ? 'collapsed' : ''}">
+          <button class="stats-venue-header stats-collapse-toggle" type="button" data-collapse-key="${escapeAttr(venueKey)}">
+            ${icon('building')}
+            <span class="stats-venue-name">${escapeHTML(venue.name)}</span>
+            <span class="folder-count">${venueStarts} starts</span>
+            <span class="folder-chevron">${icon('chevronDown')}</span>
+          </button>
+          <div class="stats-venue-body">${foldersHTML}</div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+function statsFolderGroupsHTML(venueKey, venueHunts) {
+  const groups = new Map();
+  venueHunts.forEach((h) => {
+    const key = (h.folder || '').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  });
+  const folderKeys = [...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  if (groups.has('')) folderKeys.push('');
+
+  return folderKeys.map((key) => {
+    const rows = groups.get(key).sort((a, b) => b.starts - a.starts);
+    const displayName = key === '' ? 'Uncategorized' : key;
+    const folderKey = `${venueKey}::folder:${key}`;
+    const folderCollapsed = state.collapsedStatsGroups.has(folderKey);
+    return `
+      <div class="folder-group ${folderCollapsed ? 'collapsed' : ''}">
+        <button class="folder-header stats-collapse-toggle" type="button" data-collapse-key="${escapeAttr(folderKey)}">
+          ${icon('folder')}
+          <span class="folder-name">${escapeHTML(displayName)}</span>
+          <span class="folder-count">${rows.length}</span>
+          <span class="folder-chevron">${icon('chevronDown')}</span>
+        </button>
+        <div class="folder-hunts">
+          ${rows.map(statsHuntRowHTML).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function statsHuntRowHTML(h) {
+  return `
+    <div class="stats-hunt-row">
+      <span class="shr-title">${escapeHTML(h.title)}</span>
+      <span>${h.starts}</span>
+      <span>${h.completions}</span>
+      <span>${h.completionRate}%</span>
     </div>
   `;
 }
@@ -1325,31 +1440,6 @@ function statTileHTML(label, value) {
       <div class="stat-tile-label">${escapeHTML(label)}</div>
       <div class="stat-tile-value">${value}</div>
     </div>
-  `;
-}
-
-function perHuntTableHTML(perHunt) {
-  return `
-    <table class="stats-table">
-      <thead>
-        <tr>
-          <th>Hunt</th>
-          <th>Starts</th>
-          <th>Completions</th>
-          <th>Completion Rate</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${perHunt.map(h => `
-          <tr>
-            <td>${escapeHTML(h.title)}</td>
-            <td>${h.starts}</td>
-            <td>${h.completions}</td>
-            <td>${h.completionRate}%</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
   `;
 }
 

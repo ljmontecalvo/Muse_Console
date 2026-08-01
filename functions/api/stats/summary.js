@@ -69,7 +69,10 @@ export async function onRequestPost({ request, env }) {
   }
 
   const [huntsByVenue, eventsByVenue] = await Promise.all([
-    Promise.all(venueIds.map((vId) => ckQuery({ ...creds, recordType: 'Hunt', filterBy: venueRefFilter(vId) }))),
+    Promise.all(venueIds.map(async (vId) => {
+      const vHunts = await ckQuery({ ...creds, recordType: 'Hunt', filterBy: venueRefFilter(vId) });
+      return vHunts.map((h) => ({ ...h, venueId: vId }));
+    })),
     Promise.all(venueIds.map((vId) => ckQuery({ ...creds, recordType: 'HuntEvent', filterBy: venueRefFilter(vId) }))),
   ]);
   const hunts = huntsByVenue.flat();
@@ -121,6 +124,8 @@ export async function onRequestPost({ request, env }) {
       return {
         huntId: h.recordName,
         title: (h.fields.title && h.fields.title.value) || 'Untitled Hunt',
+        venueId: h.venueId,
+        folder: (h.fields.folder && h.fields.folder.value) || '',
         starts,
         completions,
         completionRate: starts > 0 ? Math.round((completions / starts) * 100) : 0,
