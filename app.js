@@ -978,37 +978,7 @@ async function renderHuntsHomeList() {
     return venueFolderSectionHTML(v, venueHunts, registryFolders, isCreatingHere, searching, showVenueHeadings);
   }).join('');
 
-  if (state.creatingFolderVenueId) {
-    const creatingEl = listEl.querySelector('.folder-header-creating');
-    if (creatingEl) {
-      const venueId = state.creatingFolderVenueId;
-      const input = creatingEl.querySelector('.folder-new-input');
-      input.focus();
-      const cancel = () => { state.creatingFolderVenueId = null; renderHuntsHomeList(); };
-      const save = async () => {
-        const name = input.value.trim();
-        if (!name) return;
-        try {
-          await Store.addFolder(venueId, name);
-          state.creatingFolderVenueId = null;
-          showToast('checkCircle', 'Folder Added');
-          await renderHuntsHomeList();
-        } catch (err) {
-          showAlert({
-            icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
-            message: err.message || 'Something went wrong talking to CloudKit.',
-            actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
-          });
-        }
-      };
-      creatingEl.querySelector('.save').addEventListener('click', save);
-      creatingEl.querySelector('.cancel').addEventListener('click', cancel);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') save();
-        if (e.key === 'Escape') cancel();
-      });
-    }
-  }
+  wireFolderCreationRow(listEl, renderHuntsHomeList);
 
   listEl.querySelectorAll('.venue-add-folder').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1038,12 +1008,12 @@ async function renderHuntsHomeList() {
     actionsEl.addEventListener('click', (e) => e.stopPropagation());
     actionsEl.querySelector('.btn-move-folder').addEventListener('click', () => {
       const hunt = huntsHomeCache.find(h => h.id === huntId);
-      if (hunt) openMoveFolderPicker(actionsEl, hunt);
+      if (hunt) openMoveFolderPicker(actionsEl, hunt, renderHuntsHomeList);
     });
   });
 }
 
-function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHere, searching, showHeading) {
+function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHere, searching, showHeading, rowRenderer = huntHomeRowHTML) {
   const groups = new Map();
   venueHunts.forEach((h) => {
     const key = (h.folder || '').trim();
@@ -1082,7 +1052,7 @@ function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHe
           <span class="folder-chevron">${icon('chevronDown')}</span>
         </button>
         <div class="folder-hunts">
-          ${hunts.length ? hunts.map(h => huntHomeRowHTML(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
+          ${hunts.length ? hunts.map(h => rowRenderer(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
         </div>
       </div>
     `;
@@ -1114,7 +1084,70 @@ function huntHomeRowHTML(h) {
   `;
 }
 
-function openMoveFolderPicker(actionsEl, hunt) {
+// venueHuntRowHTML is the per-venue Hunts screen's row — same folder-move
+// action as huntHomeRowHTML, but also carries the clue-count/tag-install
+// badge that screen has always shown (huntClueCounts/huntInstalledTagCounts
+// are populated by renderHuntsList).
+function venueHuntRowHTML(h) {
+  const clueCount = huntClueCounts[h.id] ?? 0;
+  const installedCount = huntInstalledTagCounts[h.id] ?? 0;
+  const tagsReady = clueCount > 0 && installedCount === clueCount;
+  return `
+    <div class="hunt-row glass" data-hunt="${h.id}">
+      <div class="hr-icon">${icon('map')}</div>
+      <div class="hr-body">
+        <div class="hr-title">${escapeHTML(h.title)}</div>
+        <div class="hr-sub">${escapeHTML(h.description)}</div>
+      </div>
+      <div class="hr-meta">
+        <span class="hr-count">${clueCount} clue${clueCount === 1 ? '' : 's'}</span>
+        ${clueCount > 0 ? `<span class="status-badge ${tagsReady ? 'status-installed' : 'status-pending'}">${icon(tagsReady ? 'checkCircle' : 'boxSeam')}${installedCount}/${clueCount} tags installed</span>` : ''}
+      </div>
+      <div class="hr-actions">
+        <button class="btn-icon-sm btn-move-folder" type="button" title="Move to folder">${icon('folder')}</button>
+        ${icon('chevronRight')}
+      </div>
+    </div>
+  `;
+}
+
+// Wires the inline "new folder name" row produced by venueFolderSectionHTML
+// (see state.creatingFolderVenueId) — shared by both the All Hunts screen
+// and the per-venue Hunts screen, since folder creation looks and behaves
+// identically on either.
+function wireFolderCreationRow(listEl, onDone) {
+  if (!state.creatingFolderVenueId) return;
+  const creatingEl = listEl.querySelector('.folder-header-creating');
+  if (!creatingEl) return;
+  const venueId = state.creatingFolderVenueId;
+  const input = creatingEl.querySelector('.folder-new-input');
+  input.focus();
+  const cancel = () => { state.creatingFolderVenueId = null; onDone(); };
+  const save = async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    try {
+      await Store.addFolder(venueId, name);
+      state.creatingFolderVenueId = null;
+      showToast('checkCircle', 'Folder Added');
+      await onDone();
+    } catch (err) {
+      showAlert({
+        icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Add Folder',
+        message: err.message || 'Something went wrong talking to CloudKit.',
+        actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+      });
+    }
+  };
+  creatingEl.querySelector('.save').addEventListener('click', save);
+  creatingEl.querySelector('.cancel').addEventListener('click', cancel);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') cancel();
+  });
+}
+
+function openMoveFolderPicker(actionsEl, hunt, onDone) {
   (async () => {
     let folders = [];
     try {
@@ -1126,18 +1159,18 @@ function openMoveFolderPicker(actionsEl, hunt) {
     const select = actionsEl.querySelector('select');
     select.focus();
     wireFolderSelect(select, hunt.venueId, async (name) => {
-      if (name === null) { renderHuntsHomeList(); return; }
+      if (name === null) { onDone(); return; }
       try {
         await Store.setHuntFolder(hunt.id, hunt.recordChangeTag, name);
         showToast('checkCircle', 'Hunt Moved');
-        await renderHuntsHomeList();
+        await onDone();
       } catch (err) {
         showAlert({
           icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Move Hunt',
           message: err.message || 'Something went wrong talking to CloudKit.',
           actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
         });
-        renderHuntsHomeList();
+        onDone();
       }
     });
   })();
@@ -1436,6 +1469,7 @@ let huntInstalledTagCounts = {};
 async function goToHunts(venueId) {
   state.venueId = venueId;
   state.huntId = null;
+  state.creatingFolderVenueId = null;
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
@@ -1454,61 +1488,83 @@ async function goToHunts(venueId) {
   newBtn.innerHTML = `${icon('plus')} New Hunt`;
   newBtn.onclick = () => openEditor(null, venueId);
 
+  const addFolderBtn = document.getElementById('btn-add-folder-venue');
+  addFolderBtn.innerHTML = `${icon('plus')} Add Folder`;
+  addFolderBtn.onclick = () => {
+    state.creatingFolderVenueId = venueId;
+    renderHuntsList();
+  };
+
   showView('hunts');
   await renderHuntsList();
 }
 
+// Same folder grouping/management as the All Hunts screen's single-venue
+// view (venueFolderSectionHTML, Add Folder, move-to-folder) — this is the
+// screen a manager with exactly one venue actually lands on (see the
+// redirect in goToHuntsHome), so folder management needs to live here too,
+// not just on All Hunts. Any signed-in manager who can reach this venue at
+// all already has CloudKit write access to Hunt/FolderRegistry — there's no
+// separate admin-only permission being bypassed by showing it here.
 async function renderHuntsList() {
   const listEl = document.getElementById('hunts-list');
   listEl.innerHTML = loadingHTML('Loading hunts…');
 
-  let all;
+  let all, registryFolders = [];
   try {
     all = await Store.huntsForVenue(state.venueId);
     huntsCache = all;
     const clueLists = await Promise.all(all.map(h => Store.cluesForHunt(h.id).catch(() => [])));
     huntClueCounts = Object.fromEntries(all.map((h, i) => [h.id, clueLists[i].length]));
     huntInstalledTagCounts = Object.fromEntries(all.map((h, i) => [h.id, clueLists[i].filter(c => c.tagStatus === 'installed').length]));
+    registryFolders = await Store.allFolders(state.venueId).catch(() => []);
   } catch (err) {
     listEl.innerHTML = errorHTML('Could not load hunts', err);
     listEl.querySelector('#retry-btn').addEventListener('click', renderHuntsList);
     return;
   }
 
-  const filtered = all.filter(h => h.title.toLowerCase().includes(state.huntSearch.toLowerCase()));
+  const searchTerm = state.huntSearch.toLowerCase();
+  const searching = state.huntSearch.trim().length > 0;
+  const filtered = all.filter(h => h.title.toLowerCase().includes(searchTerm));
+  const isCreatingHere = state.creatingFolderVenueId === state.venueId;
 
-  if (all.length === 0) {
+  if (all.length === 0 && registryFolders.length === 0 && !isCreatingHere) {
     listEl.innerHTML = '';
     listEl.appendChild(emptyState('map', 'No Hunts Yet', 'Create your first scavenger hunt for this venue.'));
     return;
   }
-  if (filtered.length === 0) {
+  if (searching && filtered.length === 0 && registryFolders.length === 0 && !isCreatingHere) {
     listEl.innerHTML = `<div class="empty-state">${icon('search')}<div class="es-title">No matches</div><div class="es-desc">No hunts match “${escapeHTML(state.huntSearch)}”.</div></div>`;
     return;
   }
 
-  listEl.innerHTML = filtered.map(h => {
-    const clueCount = huntClueCounts[h.id] ?? 0;
-    const installedCount = huntInstalledTagCounts[h.id] ?? 0;
-    const tagsReady = clueCount > 0 && installedCount === clueCount;
-    return `
-    <div class="hunt-row glass" data-hunt="${h.id}">
-      <div class="hr-icon">${icon('map')}</div>
-      <div class="hr-body">
-        <div class="hr-title">${escapeHTML(h.title)}</div>
-        <div class="hr-sub">${escapeHTML(h.description)}</div>
-      </div>
-      <div class="hr-meta">
-        <span class="hr-count">${clueCount} clue${clueCount === 1 ? '' : 's'}</span>
-        ${clueCount > 0 ? `<span class="status-badge ${tagsReady ? 'status-installed' : 'status-pending'}">${icon(tagsReady ? 'checkCircle' : 'boxSeam')}${installedCount}/${clueCount} tags installed</span>` : ''}
-        ${icon('chevronRight')}
-      </div>
-    </div>
-  `;
-  }).join('');
+  listEl.innerHTML = venueFolderSectionHTML({ id: state.venueId }, filtered, registryFolders, isCreatingHere, searching, false, venueHuntRowHTML);
 
-  listEl.querySelectorAll('[data-hunt]').forEach(row => {
-    row.addEventListener('click', () => openEditor(row.dataset.hunt, state.venueId));
+  wireFolderCreationRow(listEl, renderHuntsList);
+
+  listEl.querySelectorAll('.folder-header').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.collapseKey;
+      if (state.collapsedHuntFolders.has(key)) {
+        state.collapsedHuntFolders.delete(key);
+      } else {
+        state.collapsedHuntFolders.add(key);
+      }
+      renderHuntsList();
+    });
+  });
+
+  listEl.querySelectorAll('.hunt-row').forEach((row) => {
+    const huntId = row.dataset.hunt;
+    row.addEventListener('click', () => openEditor(huntId, state.venueId));
+
+    const actionsEl = row.querySelector('.hr-actions');
+    actionsEl.addEventListener('click', (e) => e.stopPropagation());
+    actionsEl.querySelector('.btn-move-folder').addEventListener('click', () => {
+      const hunt = all.find(h => h.id === huntId);
+      if (hunt) openMoveFolderPicker(actionsEl, hunt, renderHuntsList);
+    });
   });
 }
 
