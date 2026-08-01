@@ -387,14 +387,15 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .ck-auth-button {
   display: none;
   width: 100%;
-  min-height: 52px;
+  height: 48px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   border-radius: 10px;
+  border: 1px solid var(--border);
 }
 .ck-auth-button.visible { display: flex; }
-.ck-auth-button iframe { display: block; }
+.ck-auth-button iframe { display: block; width: 100% !important; height: 100% !important; }
 
 .demo-banner {
   margin-top: 14px;
