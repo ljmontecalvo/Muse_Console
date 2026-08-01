@@ -41,6 +41,53 @@ const MockStore = (() => {
 
   let folderRegistry = {};
 
+  // Deterministic-but-plausible fake stats for demo mode, generated once and cached so
+  // the numbers stay stable across re-renders instead of jumping around. Seeded off each
+  // hunt's own id so the same demo hunt always shows the same shape of data.
+  let statsCache = null;
+  function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  function seededRandom(seed) {
+    let s = seed || 1;
+    return () => {
+      s = (s * 1103515245 + 12345) & 0x7fffffff;
+      return s / 0x7fffffff;
+    };
+  }
+  function generateFakeStats() {
+    const DAYS = 30;
+    const now = Date.now();
+    const perHunt = [];
+    const perHuntDaily = {};
+    hunts.forEach((h) => {
+      const rand = seededRandom(hashString(h.id));
+      const daily = {};
+      let totalStarts = 0, totalCompletions = 0;
+      for (let i = DAYS - 1; i >= 0; i--) {
+        const d = new Date(now - i * 86400000);
+        const date = d.toISOString().slice(0, 10);
+        const weekendBoost = (d.getDay() === 0 || d.getDay() === 6) ? 1.6 : 1;
+        const starts = Math.round(rand() * 6 * weekendBoost);
+        const completions = Math.round(starts * (0.45 + rand() * 0.4));
+        daily[date] = { starts, completions };
+        totalStarts += starts;
+        totalCompletions += completions;
+      }
+      perHuntDaily[h.id] = daily;
+      perHunt.push({
+        huntId: h.id,
+        title: h.title,
+        starts: totalStarts,
+        completions: totalCompletions,
+        completionRate: totalStarts > 0 ? Math.round((totalCompletions / totalStarts) * 100) : 0,
+      });
+    });
+    return { perHunt, perHuntDaily };
+  }
+
   let appUsers = [
     { userRecordName: 'mock_manager', name: 'Landon Montecalvo', email: 'landonjmontecalvo@gmail.com', isAdmin: true },
     { userRecordName: 'someone_else', name: 'Jordan Reyes', email: 'jordan.reyes@example.com', isAdmin: false },
@@ -134,6 +181,30 @@ const MockStore = (() => {
       const h = hunts.find(x => x.id === huntId);
       if (h) h.folder = folder || '';
     },
+    async getStats(venueId) {
+      if (!statsCache) statsCache = generateFakeStats();
+      const scopedHuntIds = new Set(hunts.filter(h => !venueId || h.venueId === venueId).map(h => h.id));
+      const perHunt = statsCache.perHunt.filter(p => scopedHuntIds.has(p.huntId));
+
+      const totals = perHunt.reduce((acc, p) => {
+        acc.starts += p.starts;
+        acc.completions += p.completions;
+        return acc;
+      }, { starts: 0, completions: 0 });
+      totals.completionRate = totals.starts > 0 ? Math.round((totals.completions / totals.starts) * 100) : 0;
+
+      const dates = Object.keys(statsCache.perHuntDaily[hunts[0]?.id] || {}).sort();
+      const timeSeries = dates.map((date) => {
+        let starts = 0, completions = 0;
+        scopedHuntIds.forEach((huntId) => {
+          const day = statsCache.perHuntDaily[huntId] && statsCache.perHuntDaily[huntId][date];
+          if (day) { starts += day.starts; completions += day.completions; }
+        });
+        return { date, starts, completions };
+      });
+
+      return { totals, timeSeries, perHunt: [...perHunt].sort((a, b) => b.starts - a.starts) };
+    },
   };
 })();
 
@@ -155,7 +226,7 @@ function clueTagRecordName(clueRecordName) {
 // Hunt/Clue/ClueTag/AppUser writes go through these backend endpoints instead of
 // straight to CloudKit — CloudKit's role model can't express "only this venue's
 // managers," so the venue-scoping check happens server-side against the S2S key.
-// See functions/api/ and CLOUDKIT_SETUP.md.
+// See functions/api/ and functions/_shared/auth.js.
 async function apiPost(path, body) {
   const resp = await fetch(path, {
     method: 'POST',
@@ -396,6 +467,17 @@ const CloudKitStore = {
       huntId, recordChangeTag, folder,
     });
   },
+
+  // Pre-aggregated totals/time-series/per-hunt numbers — see functions/api/stats/
+  // summary.js. venueId omitted means "everything I'm allowed to see" (every venue for
+  // an admin, every managed venue for a manager); passing one scopes to just that venue.
+  async getStats(venueId) {
+    const resp = await apiPost('/api/stats/summary', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      venueId: venueId || null,
+    });
+    return { totals: resp.totals, timeSeries: resp.timeSeries, perHunt: resp.perHunt };
+  },
 };
 
 function identityToManager(identity) {
@@ -431,6 +513,7 @@ const state = {
   collapsedHuntFolders: new Set(),
   creatingFolderVenueId: null,
   huntsHomeVenueFilter: '',
+  statsVenueFilter: '',
   // Which sidebar item should read as active. Set explicitly by each nav
   // entry point (goToVenues/goToHuntsHome/goToUsers/goToSettings) rather
   // than inferred from the current view name, since view-hunts (a single
@@ -503,6 +586,7 @@ applySidebarCollapsed(getSidebarCollapsed());
 function renderSidebar() {
   const navVenues = document.getElementById('nav-venues');
   const navHuntsHome = document.getElementById('nav-hunts-home');
+  const navStats = document.getElementById('nav-stats');
   const navUsers = document.getElementById('nav-users');
   const navSettings = document.getElementById('nav-settings');
   navVenues.title = 'Venues';
@@ -511,6 +595,9 @@ function renderSidebar() {
   navHuntsHome.title = 'Hunts';
   navHuntsHome.innerHTML = `${icon('map')} <span class="nav-label">Hunts</span>`;
   navHuntsHome.addEventListener('click', goToHuntsHome);
+  navStats.title = 'Statistics';
+  navStats.innerHTML = `${icon('chartBar')} <span class="nav-label">Statistics</span>`;
+  navStats.addEventListener('click', goToStats);
   navUsers.title = 'Users';
   navUsers.innerHTML = `${icon('person')} <span class="nav-label">Users</span>`;
   navUsers.addEventListener('click', goToUsers);
@@ -566,7 +653,7 @@ function renderSidebar() {
 }
 
 function setActiveNav() {
-  ['venues', 'hunts-home', 'users', 'settings'].forEach((id) => {
+  ['venues', 'hunts-home', 'stats', 'users', 'settings'].forEach((id) => {
     const el = document.getElementById(`nav-${id}`);
     if (el) el.classList.toggle('active', id === state.activeNavSection);
   });
@@ -1119,6 +1206,179 @@ function openMoveFolderPicker(actionsEl, hunt, onDone) {
       }
     });
   })();
+}
+
+/* ---------------------------------------------------------------
+   Statistics — visitor hunt-start/completion numbers, reported by the
+   iOS app to functions/api/events/log.js and pre-aggregated server-side
+   by functions/api/stats/summary.js (see Store.getStats). Available to
+   any signed-in manager, scoped to their own venues; admins can see
+   everything or filter to one venue via the same switcher pattern used
+   on the All Hunts screen.
+------------------------------------------------------------------ */
+
+async function goToStats() {
+  state.venueId = null;
+  state.huntId = null;
+  state.activeNavSection = 'stats';
+  renderPageHeader([]);
+  showView('stats');
+  await renderStatsView();
+}
+
+async function renderStatsView() {
+  const bodyEl = document.getElementById('stats-body');
+  bodyEl.innerHTML = loadingHTML('Loading statistics…');
+
+  let venues = [];
+  try {
+    venues = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+  } catch (err) {
+    bodyEl.innerHTML = errorHTML('Could not load statistics', err);
+    bodyEl.querySelector('#retry-btn').addEventListener('click', renderStatsView);
+    return;
+  }
+
+  const venueFilterEl = document.getElementById('stats-venue-filter');
+  if (venues.length > 1) {
+    if (!venues.some(v => v.id === state.statsVenueFilter)) state.statsVenueFilter = '';
+    venueFilterEl.style.display = '';
+    venueFilterEl.innerHTML = `
+      <option value="">All Venues</option>
+      ${venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.statsVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('')}
+    `;
+    venueFilterEl.onchange = () => {
+      state.statsVenueFilter = venueFilterEl.value;
+      renderStatsView();
+    };
+  } else {
+    venueFilterEl.style.display = 'none';
+    state.statsVenueFilter = '';
+  }
+
+  if (venues.length === 0) {
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(emptyState(
+      'chartBar', 'No Venues Yet',
+      CURRENT_MANAGER.isAdmin ? 'No Venue records exist in CloudKit yet.' : "You don't manage any venues yet."
+    ));
+    return;
+  }
+
+  let stats;
+  try {
+    stats = await Store.getStats(state.statsVenueFilter || null);
+  } catch (err) {
+    bodyEl.innerHTML = errorHTML('Could not load statistics', err);
+    bodyEl.querySelector('#retry-btn').addEventListener('click', renderStatsView);
+    return;
+  }
+
+  if (stats.perHunt.length === 0) {
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(emptyState('chartBar', 'No Hunts Yet', 'Create a hunt to start seeing visitor statistics here.'));
+    return;
+  }
+
+  bodyEl.innerHTML = `
+    <div class="stats-kpi-row">
+      ${statTileHTML('Hunts Started', stats.totals.starts)}
+      ${statTileHTML('Hunts Completed', stats.totals.completions)}
+      ${statTileHTML('Completion Rate', stats.totals.completionRate + '%')}
+    </div>
+    <div class="panel glass stats-chart-panel">
+      <p class="panel-title">Starts &amp; Completions <span class="stats-chart-sub">Last 30 days</span></p>
+      ${timeSeriesChartSVG(stats.timeSeries)}
+    </div>
+    <div class="panel glass">
+      <p class="panel-title">By Hunt</p>
+      ${perHuntTableHTML(stats.perHunt)}
+    </div>
+  `;
+}
+
+function statTileHTML(label, value) {
+  return `
+    <div class="stat-tile">
+      <div class="stat-tile-label">${escapeHTML(label)}</div>
+      <div class="stat-tile-value">${value}</div>
+    </div>
+  `;
+}
+
+function perHuntTableHTML(perHunt) {
+  return `
+    <table class="stats-table">
+      <thead>
+        <tr>
+          <th>Hunt</th>
+          <th>Starts</th>
+          <th>Completions</th>
+          <th>Completion Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${perHunt.map(h => `
+          <tr>
+            <td>${escapeHTML(h.title)}</td>
+            <td>${h.starts}</td>
+            <td>${h.completions}</td>
+            <td>${h.completionRate}%</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// Hand-rolled SVG line chart — no charting library, since the CSP's script-src is
+// locked to 'self' plus Apple/Cloudflare's own hosts and can't load one from a CDN.
+// CSS custom properties (var(--accent) etc.) resolve fine here because this SVG is
+// inlined directly into the page's own DOM, not drawn on a <canvas>.
+function timeSeriesChartSVG(timeSeries) {
+  const W = 800, H = 240, PAD_L = 36, PAD_R = 12, PAD_T = 12, PAD_B = 28;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+  const n = timeSeries.length;
+
+  const maxVal = Math.max(1, ...timeSeries.map(d => Math.max(d.starts, d.completions)));
+  const yMax = Math.ceil(maxVal * 1.15);
+
+  const xFor = (i) => PAD_L + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+  const yFor = (v) => PAD_T + plotH - (v / yMax) * plotH;
+  const pathFor = (key) => timeSeries.map((d, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(d[key]).toFixed(1)}`).join(' ');
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const y = PAD_T + plotH * (1 - f);
+    const val = Math.round(yMax * f);
+    return `
+      <line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${W - PAD_R}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1" />
+      <text x="${PAD_L - 8}" y="${y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="11" fill="var(--text-tertiary)">${val}</text>
+    `;
+  }).join('');
+
+  // At most ~6 date labels across the axis so they don't collide.
+  const labelEvery = Math.max(1, Math.ceil(n / 6));
+  const xLabels = timeSeries.map((d, i) => {
+    if (i % labelEvery !== 0 && i !== n - 1) return '';
+    const label = new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `<text x="${xFor(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--text-tertiary)">${escapeHTML(label)}</text>`;
+  }).join('');
+
+  return `
+    <div class="stats-legend">
+      <span class="stats-legend-item"><span class="stats-legend-swatch" style="background:var(--accent)"></span>Starts</span>
+      <span class="stats-legend-item"><span class="stats-legend-swatch" style="background:var(--green)"></span>Completions</span>
+    </div>
+    <svg class="stats-chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Line chart of hunt starts and completions over the last 30 days">
+      ${gridLines}
+      <path d="${pathFor('starts')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="${pathFor('completions')}" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      ${xLabels}
+    </svg>
+  `;
 }
 
 async function goToUsers() {

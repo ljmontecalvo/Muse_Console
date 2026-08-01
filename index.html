@@ -11,7 +11,7 @@
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="stylesheet" href="styles.css?v=20260720l" />
+<link rel="stylesheet" href="styles.css?v=20260721a" />
 </head>
 <body>
 <div id="app">
@@ -38,6 +38,7 @@
       <nav class="sidebar-nav">
         <button class="nav-item" type="button" id="nav-venues"></button>
         <button class="nav-item" type="button" id="nav-hunts-home"></button>
+        <button class="nav-item" type="button" id="nav-stats"></button>
         <button class="nav-item" type="button" id="nav-users"></button>
         <button class="nav-item" type="button" id="nav-settings"></button>
       </nav>
@@ -88,6 +89,18 @@
               </div>
             </div>
             <div id="hunts-list"></div>
+          </div>
+        </section>
+
+        <section id="view-stats" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title">Statistics</h1>
+              <div class="section-actions">
+                <select class="folder-select venue-filter-select" id="stats-venue-filter" style="display:none;"></select>
+              </div>
+            </div>
+            <div id="stats-body"></div>
           </div>
         </section>
 
@@ -198,8 +211,8 @@
 <div class="toast glass-strong" id="toast"></div>
 
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260720l"></script>
-<script src="icons.js?v=20260720l"></script>
-<script src="app.js?v=20260720l"></script>
+<script src="config.js?v=20260721a"></script>
+<script src="icons.js?v=20260721a"></script>
+<script src="app.js?v=20260721a"></script>
 </body>
 </html>
