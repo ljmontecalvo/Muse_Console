@@ -19,7 +19,7 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
 
-  const { callerUserRecordName, huntId, venueId, huntChangeTag, data, clues, originalClueIds } = payload || {};
+  const { callerUserRecordName, huntId, venueId, huntChangeTag, data, clues } = payload || {};
   if (!callerUserRecordName || !venueId || !data || !Array.isArray(clues)) {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
@@ -35,6 +35,22 @@ export async function onRequestPost({ request, env }) {
 
   const authorized = await authorizeVenueOrAdmin(creds, authoritativeVenueId, callerUserRecordName);
   if (!authorized) return jsonResponse({ ok: false, error: 'forbidden' }, 403);
+
+  // Server-verified source of truth for which clues currently belong to this hunt —
+  // Clue recordNames/changeTags are World-readable (any venue's), so the client's
+  // `clues` list can never be trusted to say what it's allowed to touch. A brand new
+  // hunt (no huntId yet) legitimately owns zero existing clues.
+  const actualClues = huntId ? await ckQuery({
+    ...creds,
+    recordType: 'Clue',
+    filterBy: [{ fieldName: 'huntReference', comparator: 'EQUALS', fieldValue: { value: { recordName: huntId } } }],
+  }) : [];
+  const actualClueIds = new Set(actualClues.map((c) => c.recordName));
+
+  const invalidClueRef = clues.find((c) => c.id && !c.id.startsWith('draft_') && !actualClueIds.has(c.id));
+  if (invalidClueRef) {
+    return jsonResponse({ ok: false, error: 'forbidden', message: 'One or more clues do not belong to this hunt' }, 403);
+  }
 
   const huntOp = huntId
     ? {
@@ -71,7 +87,8 @@ export async function onRequestPost({ request, env }) {
   const finalHuntId = savedHunt.recordName;
 
   const currentIds = new Set(clues.filter((c) => c.id && !c.id.startsWith('draft_')).map((c) => c.id));
-  const toDelete = [...(originalClueIds || [])].filter((id) => !currentIds.has(id));
+  // Derived from the server-verified set, not client input — see actualClueIds above.
+  const toDelete = [...actualClueIds].filter((id) => !currentIds.has(id));
 
   const clueOps = [];
   clues.forEach((c, i) => {
