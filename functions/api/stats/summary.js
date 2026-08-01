@@ -11,7 +11,8 @@
 import { ckQuery, getS2SCreds, jsonResponse } from '../../_shared/cloudkit.js';
 import { isAdmin } from '../../_shared/auth.js';
 
-const DAYS = 30;
+const DEFAULT_DAYS = 30;
+const ALLOWED_DAYS = new Set([7, 30, 90]);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function venueRefFilter(venueId) {
@@ -26,10 +27,11 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
 
-  const { callerUserRecordName, venueId } = payload || {};
+  const { callerUserRecordName, venueId, days } = payload || {};
   if (!callerUserRecordName) {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
+  const DAYS = ALLOWED_DAYS.has(days) ? days : DEFAULT_DAYS;
 
   if (!env.CLOUDKIT_S2S_PRIVATE_KEY_PKCS8_B64 || !env.CLOUDKIT_S2S_KEY_ID) {
     console.error('stats/summary: missing S2S env vars');

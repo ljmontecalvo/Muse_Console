@@ -58,7 +58,7 @@ const MockStore = (() => {
     };
   }
   function generateFakeStats() {
-    const DAYS = 30;
+    const DAYS = 90;
     const now = Date.now();
     const perHunt = [];
     const perHuntDaily = {};
@@ -181,7 +181,7 @@ const MockStore = (() => {
       const h = hunts.find(x => x.id === huntId);
       if (h) h.folder = folder || '';
     },
-    async getStats(venueId) {
+    async getStats(venueId, days) {
       if (!statsCache) statsCache = generateFakeStats();
       const scopedHuntIds = new Set(hunts.filter(h => !venueId || h.venueId === venueId).map(h => h.id));
       const perHunt = statsCache.perHunt.filter(p => scopedHuntIds.has(p.huntId));
@@ -193,7 +193,8 @@ const MockStore = (() => {
       }, { starts: 0, completions: 0 });
       totals.completionRate = totals.starts > 0 ? Math.round((totals.completions / totals.starts) * 100) : 0;
 
-      const dates = Object.keys(statsCache.perHuntDaily[hunts[0]?.id] || {}).sort();
+      const allDates = Object.keys(statsCache.perHuntDaily[hunts[0]?.id] || {}).sort();
+      const dates = allDates.slice(-(days || 30));
       const timeSeries = dates.map((date) => {
         let starts = 0, completions = 0;
         scopedHuntIds.forEach((huntId) => {
@@ -471,10 +472,13 @@ const CloudKitStore = {
   // Pre-aggregated totals/time-series/per-hunt numbers — see functions/api/stats/
   // summary.js. venueId omitted means "everything I'm allowed to see" (every venue for
   // an admin, every managed venue for a manager); passing one scopes to just that venue.
-  async getStats(venueId) {
+  // days controls only the time-series window (totals/perHunt stay all-time); omitted
+  // defaults server-side to 30.
+  async getStats(venueId, days) {
     const resp = await apiPost('/api/stats/summary', {
       callerUserRecordName: CURRENT_MANAGER.userRecordName,
       venueId: venueId || null,
+      days: days || null,
     });
     return { totals: resp.totals, timeSeries: resp.timeSeries, perHunt: resp.perHunt };
   },
@@ -514,6 +518,7 @@ const state = {
   creatingFolderVenueId: null,
   huntsHomeVenueFilter: '',
   statsVenueFilter: '',
+  statsTimeframeDays: 30,
   // Which sidebar item should read as active. Set explicitly by each nav
   // entry point (goToVenues/goToHuntsHome/goToUsers/goToSettings) rather
   // than inferred from the current view name, since view-hunts (a single
@@ -1258,6 +1263,21 @@ async function renderStatsView() {
     state.statsVenueFilter = '';
   }
 
+  const timeframeEl = document.getElementById('stats-timeframe-select');
+  timeframeEl.value = String(state.statsTimeframeDays);
+  timeframeEl.onchange = () => {
+    state.statsTimeframeDays = Number(timeframeEl.value);
+    renderStatsView();
+  };
+
+  const refreshBtn = document.getElementById('btn-refresh-stats');
+  refreshBtn.innerHTML = `${icon('refresh')} Refresh`;
+  refreshBtn.title = 'Refresh statistics';
+  refreshBtn.onclick = () => {
+    refreshBtn.disabled = true;
+    renderStatsView().finally(() => { refreshBtn.disabled = false; });
+  };
+
   if (venues.length === 0) {
     bodyEl.innerHTML = '';
     bodyEl.appendChild(emptyState(
@@ -1269,7 +1289,7 @@ async function renderStatsView() {
 
   let stats;
   try {
-    stats = await Store.getStats(state.statsVenueFilter || null);
+    stats = await Store.getStats(state.statsVenueFilter || null, state.statsTimeframeDays);
   } catch (err) {
     bodyEl.innerHTML = errorHTML('Could not load statistics', err);
     bodyEl.querySelector('#retry-btn').addEventListener('click', renderStatsView);
@@ -1289,7 +1309,7 @@ async function renderStatsView() {
       ${statTileHTML('Completion Rate', stats.totals.completionRate + '%')}
     </div>
     <div class="panel glass stats-chart-panel">
-      <p class="panel-title">Starts &amp; Completions <span class="stats-chart-sub">Last 30 days</span></p>
+      <p class="panel-title">Starts &amp; Completions <span class="stats-chart-sub">Last ${state.statsTimeframeDays} days</span></p>
       ${timeSeriesChartSVG(stats.timeSeries)}
     </div>
     <div class="panel glass">
