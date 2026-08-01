@@ -1191,8 +1191,8 @@ async function renderUsersList() {
 
   const filtered = users.filter(u =>
     matchesFilter(u) &&
-    (u.name.toLowerCase().includes(state.userSearch.toLowerCase()) ||
-     u.email.toLowerCase().includes(state.userSearch.toLowerCase()))
+    ((u.name || '').toLowerCase().includes(state.userSearch.toLowerCase()) ||
+     (u.email || '').toLowerCase().includes(state.userSearch.toLowerCase()))
   );
 
   if (users.length === 0) {
