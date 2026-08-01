@@ -501,6 +501,13 @@ const state = {
   collapsedHuntFolders: new Set(),
   creatingFolderVenueId: null,
   huntsHomeVenueFilter: '',
+  // Which sidebar item should read as active. Set explicitly by each nav
+  // entry point (goToVenues/goToHuntsHome/goToUsers/goToSettings) rather
+  // than inferred from the current view name, since view-hunts (a single
+  // venue's hunts) is reached both by drilling into Venues and by the
+  // single-venue-manager shortcut off the Hunts nav — the same view needs
+  // a different sidebar highlight depending on which one got you there.
+  activeNavSection: 'venues',
 };
 
 let draftClueSeq = 1;
@@ -510,7 +517,7 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(`view-${name}`).classList.add('active');
   document.getElementById('app-shell').style.display = name === 'signin' ? 'none' : 'flex';
-  if (name !== 'signin') setActiveNav(name);
+  if (name !== 'signin') setActiveNav();
   closeAccountMenus();
   window.scrollTo({ top: 0 });
 }
@@ -621,11 +628,10 @@ function renderSidebar() {
   });
 }
 
-function setActiveNav(view) {
-  const section = (view === 'hunts' || view === 'editor') ? 'venues' : view;
+function setActiveNav() {
   ['venues', 'hunts-home', 'users', 'settings'].forEach((id) => {
     const el = document.getElementById(`nav-${id}`);
-    if (el) el.classList.toggle('active', id === section);
+    if (el) el.classList.toggle('active', id === state.activeNavSection);
   });
 }
 
@@ -667,6 +673,7 @@ function renderSearchBox(containerId, placeholder, value, onInput) {
 async function goToVenues() {
   state.venueId = null;
   state.huntId = null;
+  state.activeNavSection = 'venues';
   renderPageHeader([]);
   renderSearchBox('venue-search-box', 'Search venues', state.venueSearch, (v) => {
     state.venueSearch = v;
@@ -863,6 +870,7 @@ async function goToHuntsHome() {
   state.huntId = null;
   state.creatingFolderVenueId = null;
   state.huntsHomeVenueFilter = '';
+  state.activeNavSection = 'hunts-home';
 
   if (!CURRENT_MANAGER.isAdmin) {
     try {
@@ -1179,6 +1187,7 @@ function openMoveFolderPicker(actionsEl, hunt, onDone) {
 async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
+  state.activeNavSection = 'users';
   renderPageHeader([]);
   showView('users');
 
@@ -1418,6 +1427,7 @@ function confirmUnassignManager(user, venueId, venues) {
 async function goToSettings() {
   state.venueId = null;
   state.huntId = null;
+  state.activeNavSection = 'settings';
   renderPageHeader([]);
   showView('settings');
 
@@ -2120,6 +2130,10 @@ async function enterAfterSignIn() {
     const venues = await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
     if (venues.length === 1) {
       venuesCache = venues;
+      // Same shortcut goToHuntsHome() uses for a one-venue manager — the
+      // landing screen is their venue's Hunts list, so the sidebar should
+      // read "Hunts" as active, not "Venues" (which they never visited).
+      state.activeNavSection = 'hunts-home';
       await goToHunts(venues[0].id);
       return;
     }
