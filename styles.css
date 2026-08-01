@@ -784,8 +784,11 @@ textarea.hunt-desc { min-height: 64px; }
   position: absolute;
   left: 0; right: 0;
   bottom: 100%;
-  height: 32px;
-  background: linear-gradient(to bottom, transparent, var(--bg-canvas));
+  height: 56px;
+  /* Reaches solid well before the footer's own edge (60%, not 100%) so
+     there's a clean white buffer for the footer's border to sit on,
+     instead of the border line landing right in the middle of the fade. */
+  background: linear-gradient(to bottom, transparent, var(--bg-canvas) 60%);
   pointer-events: none;
 }
 
