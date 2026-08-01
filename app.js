@@ -180,15 +180,6 @@ function assertNoErrors(response) {
   }
 }
 
-function recordToVenue(r) {
-  return {
-    id: r.recordName,
-    recordChangeTag: r.recordChangeTag,
-    name: r.fields.name && r.fields.name.value,
-    address: r.fields.address && r.fields.address.value,
-    managers: (r.fields.managers && r.fields.managers.value) || [],
-  };
-}
 function recordToHunt(r) {
   return {
     id: r.recordName,
@@ -265,9 +256,10 @@ const CloudKitStore = {
   },
 
   async allVenues() {
-    const response = await publicDB.performQuery({ recordType: 'Venue' });
-    assertNoErrors(response);
-    return response.records.map(recordToVenue);
+    // Scoping happens server-side based on the caller's verified admin status, not on
+    // which client method is called — see functions/api/venues/list.js.
+    const resp = await apiPost('/api/venues/list', { callerUserRecordName: CURRENT_MANAGER.userRecordName });
+    return resp.venues;
   },
 
   async createVenue(name, address) {
@@ -307,18 +299,15 @@ const CloudKitStore = {
   },
 
   async venuesForManager(managerId) {
-    const response = await publicDB.performQuery({
-      recordType: 'Venue',
-      filterBy: [{ fieldName: 'managers', comparator: 'LIST_CONTAINS', fieldValue: { value: managerId } }],
-    });
-    assertNoErrors(response);
-    return response.records.map(recordToVenue);
+    // managerId is always CURRENT_MANAGER.userRecordName in practice (see call sites);
+    // the backend derives scope from the authenticated caller either way.
+    const resp = await apiPost('/api/venues/list', { callerUserRecordName: CURRENT_MANAGER.userRecordName });
+    return resp.venues;
   },
 
   async venue(id) {
-    const response = await publicDB.fetchRecords(id);
-    assertNoErrors(response);
-    return recordToVenue(response.records[0]);
+    const resp = await apiPost('/api/venues/get', { callerUserRecordName: CURRENT_MANAGER.userRecordName, venueId: id });
+    return resp.venue;
   },
 
   async huntsForVenue(venueId) {
