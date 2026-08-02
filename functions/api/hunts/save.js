@@ -52,6 +52,8 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'forbidden', message: 'One or more clues do not belong to this hunt' }, 403);
   }
 
+  const trophies = Math.max(0, Math.floor(Number(data.trophies) || 0));
+
   const huntOp = huntId
     ? {
         operationType: 'update',
@@ -63,6 +65,7 @@ export async function onRequestPost({ request, env }) {
             title: { value: data.title },
             description: { value: data.description },
             folder: { value: data.folder || '' },
+            trophies: { value: trophies },
           },
         },
       }
@@ -74,6 +77,7 @@ export async function onRequestPost({ request, env }) {
             title: { value: data.title },
             description: { value: data.description },
             folder: { value: data.folder || '' },
+            trophies: { value: trophies },
             venueReference: { value: { recordName: authoritativeVenueId, action: 'NONE' } },
           },
         },

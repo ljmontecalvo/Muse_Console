@@ -483,7 +483,9 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   display: flex; flex-direction: column; gap: 10px;
   min-height: 148px;
+  position: relative;
 }
+.venue-settings-btn { position: absolute; top: 12px; right: 12px; }
 .card:hover { border-color: rgba(var(--accent-rgb), 0.4); box-shadow: var(--shadow-raised); }
 .card .card-icon {
   width: 38px; height: 38px; border-radius: 9px;
@@ -918,6 +920,26 @@ textarea.hunt-desc { min-height: 64px; }
 .stats-hunt-row:last-child { border-bottom: none; }
 .stats-hunt-row span:not(:first-child) { text-align: right; }
 .stats-hunt-row .shr-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Gift Shop ---- */
+
+#giftshop-body { display: flex; flex-direction: column; gap: 16px; }
+
+.giftshop-redeem-hint { font-size: 13px; color: var(--text-tertiary); margin: -6px 0 12px; }
+.giftshop-redeem-row { display: flex; gap: 10px; }
+#giftshop-code-input {
+  flex: 1; max-width: 220px;
+  font-size: 22px; font-weight: 700; letter-spacing: 0.2em; text-align: center;
+  text-transform: uppercase;
+}
+.giftshop-redeem-success, .giftshop-redeem-error {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px; padding: 10px 12px; font-size: 13.5px;
+  border-radius: var(--radius-card);
+}
+.giftshop-redeem-success { background: rgba(52, 199, 89, 0.14); color: var(--green); }
+.giftshop-redeem-error { background: rgba(255, 59, 48, 0.14); color: var(--red); }
+.giftshop-redeem-success .icon, .giftshop-redeem-error .icon { width: 16px; height: 16px; flex: none; }
 
 @media (max-width: 860px) {
   #app-shell.open, #app-shell { flex-direction: column; height: auto; min-height: 100vh; }

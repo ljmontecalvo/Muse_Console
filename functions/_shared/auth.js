@@ -12,6 +12,13 @@ export async function resolveHuntVenue(creds, huntId) {
   return ref ? ref.recordName : null;
 }
 
+export async function resolveGiftShopItemVenue(creds, itemId) {
+  const item = await ckFetchRecord({ ...creds, recordName: itemId });
+  if (!item) return null;
+  const ref = item.fields.venueReference && item.fields.venueReference.value;
+  return ref ? ref.recordName : null;
+}
+
 export async function isVenueManager(creds, venueId, userRecordName) {
   if (!venueId || !userRecordName) return false;
   const venue = await ckFetchRecord({ ...creds, recordName: venueId });

@@ -13,6 +13,7 @@ function recordToVenue(r) {
     name: r.fields.name && r.fields.name.value,
     address: r.fields.address && r.fields.address.value,
     managers: (r.fields.managers && r.fields.managers.value) || [],
+    giftShopEnabled: (r.fields.giftShopEnabled && r.fields.giftShopEnabled.value) === 1,
   };
 }
 

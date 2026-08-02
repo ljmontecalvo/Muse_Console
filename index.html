@@ -11,7 +11,7 @@
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="stylesheet" href="styles.css?v=20260801e" />
+<link rel="stylesheet" href="styles.css?v=20260801f" />
 </head>
 <body>
 <div id="app">
@@ -39,6 +39,7 @@
         <button class="nav-item" type="button" id="nav-venues"></button>
         <button class="nav-item" type="button" id="nav-hunts-home"></button>
         <button class="nav-item" type="button" id="nav-stats"></button>
+        <button class="nav-item" type="button" id="nav-giftshop" style="display:none;"></button>
         <button class="nav-item" type="button" id="nav-users"></button>
         <button class="nav-item" type="button" id="nav-settings"></button>
       </nav>
@@ -110,6 +111,18 @@
           </div>
         </section>
 
+        <section id="view-giftshop" class="view">
+          <div class="content">
+            <div class="section-head">
+              <h1 class="section-title">Gift Shop</h1>
+              <div class="section-actions">
+                <select class="folder-select venue-filter-select" id="giftshop-venue-filter" style="display:none;"></select>
+              </div>
+            </div>
+            <div id="giftshop-body"></div>
+          </div>
+        </section>
+
         <section id="view-users" class="view">
           <div class="content">
             <div class="section-head">
@@ -157,9 +170,13 @@
                     <label class="label" for="input-hunt-desc">Description</label>
                     <textarea id="input-hunt-desc" class="hunt-desc" placeholder="What will visitors discover on this hunt?"></textarea>
                   </div>
-                  <div class="field" style="margin-bottom:0;">
+                  <div class="field">
                     <label class="label">Folder <span class="label-optional">(optional)</span></label>
                     <div id="hunt-folder-field"></div>
+                  </div>
+                  <div class="field" style="margin-bottom:0;">
+                    <label class="label" for="input-hunt-trophies">Trophies <span class="label-optional">(optional)</span></label>
+                    <input type="number" id="input-hunt-trophies" min="0" step="1" placeholder="0" />
                   </div>
                 </div>
 
@@ -217,8 +234,8 @@
 <div class="toast glass-strong" id="toast"></div>
 
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260801e"></script>
-<script src="icons.js?v=20260801e"></script>
-<script src="app.js?v=20260801e"></script>
+<script src="config.js?v=20260801f"></script>
+<script src="icons.js?v=20260801f"></script>
+<script src="app.js?v=20260801f"></script>
 </body>
 </html>

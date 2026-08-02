@@ -19,14 +19,28 @@ const CURRENT_MANAGER = { userRecordName: null, name: '', email: '', isAdmin: fa
 
 const MockStore = (() => {
   let venues = [
-    { id: 'venue_1', name: 'Riverside Natural History Museum', address: '400 Riverside Dr, Springfield', managers: ['mock_manager'] },
-    { id: 'venue_2', name: 'Old Mill Science Center', address: '12 Mill St, Springfield', managers: ['mock_manager'] },
-    { id: 'venue_3', name: 'Harbor Maritime Museum', address: '88 Wharf Rd, Bayport', managers: ['someone_else'] },
+    { id: 'venue_1', name: 'Riverside Natural History Museum', address: '400 Riverside Dr, Springfield', managers: ['mock_manager'], giftShopEnabled: true },
+    { id: 'venue_2', name: 'Old Mill Science Center', address: '12 Mill St, Springfield', managers: ['mock_manager'], giftShopEnabled: false },
+    { id: 'venue_3', name: 'Harbor Maritime Museum', address: '88 Wharf Rd, Bayport', managers: ['someone_else'], giftShopEnabled: false },
   ];
   let hunts = [
-    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History' },
-    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History' },
-    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '' },
+    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History', trophies: 20 },
+    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History', trophies: 15 },
+    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '', trophies: 0 },
+  ];
+  let giftShopItemsSeed = [
+    { id: 'item_1', venueId: 'venue_1', name: 'Dinosaur Plush Toy', description: 'A soft, huggable T. rex.', trophyCost: 20, kind: 'item', isActive: true, sortOrder: 0 },
+    { id: 'item_2', venueId: 'venue_1', name: '10% Off Gift Shop', description: 'Applies to any single purchase.', trophyCost: 10, kind: 'discount', isActive: true, sortOrder: 1 },
+  ];
+  // Demo redemption so the "Redeem a Code" panel has something to test against in
+  // mock mode, since there's no real iOS device generating live codes here.
+  const DEMO_REDEMPTION_CODE = 'DEMOX';
+  console.info(`[Mock Mode] Demo gift shop redemption code for Riverside Natural History Museum: ${DEMO_REDEMPTION_CODE}`);
+  let pendingRedemptions = [
+    {
+      id: 'redemption_demo', venueId: 'venue_1', itemName: 'Dinosaur Plush Toy', itemKind: 'item',
+      trophyCost: 20, code: DEMO_REDEMPTION_CODE, visitorDisplayName: 'Demo Visitor', status: 'pending',
+    },
   ];
   let clues = [
     { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'K7$Q2M9!XB4@RT8&WZ3P', tagStatus: 'installed' },
@@ -217,6 +231,43 @@ const MockStore = (() => {
 
       return { totals, timeSeries, perHunt: [...perHunt].sort((a, b) => b.starts - a.starts) };
     },
+
+    async setGiftShopEnabled(venueId, enabled) {
+      const v = venues.find(x => x.id === venueId);
+      if (v) v.giftShopEnabled = !!enabled;
+    },
+
+    async giftShopItems(venueId) {
+      return giftShopItemsSeed.filter(i => i.venueId === venueId).map(i => ({ ...i })).sort((a, b) => a.sortOrder - b.sortOrder);
+    },
+
+    async saveGiftShopItem(venueId, itemId, itemChangeTag, data) {
+      if (itemId) {
+        const existing = giftShopItemsSeed.find(i => i.id === itemId);
+        if (existing) Object.assign(existing, data);
+        return itemId;
+      }
+      const id = nextId('item');
+      giftShopItemsSeed.push({ id, venueId, sortOrder: giftShopItemsSeed.length, ...data });
+      return id;
+    },
+
+    async deleteGiftShopItem(itemId) {
+      giftShopItemsSeed = giftShopItemsSeed.filter(i => i.id !== itemId);
+    },
+
+    // Matches against the demo pendingRedemptions seeded above — see
+    // DEMO_REDEMPTION_CODE, logged to the console on load.
+    async completeRedemption(venueId, code) {
+      const redemption = pendingRedemptions.find(r => r.venueId === venueId && r.status === 'pending' && r.code === code.toUpperCase());
+      if (!redemption) throw new Error('no_match');
+      redemption.status = 'completed';
+      return {
+        item: { name: redemption.itemName, kind: redemption.itemKind, trophyCost: redemption.trophyCost },
+        visitorDisplayName: redemption.visitorDisplayName,
+        remainingBalance: 999,
+      };
+    },
   };
 })();
 
@@ -270,7 +321,21 @@ function recordToHunt(r) {
     title: r.fields.title && r.fields.title.value,
     description: r.fields.description && r.fields.description.value,
     folder: (r.fields.folder && r.fields.folder.value) || '',
+    trophies: (r.fields.trophies && r.fields.trophies.value) || 0,
     venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
+  };
+}
+function recordToGiftShopItem(r) {
+  return {
+    id: r.recordName,
+    recordChangeTag: r.recordChangeTag,
+    venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
+    name: r.fields.name && r.fields.name.value,
+    description: (r.fields.description && r.fields.description.value) || '',
+    trophyCost: (r.fields.trophyCost && r.fields.trophyCost.value) || 0,
+    kind: (r.fields.kind && r.fields.kind.value) || 'item',
+    isActive: (r.fields.isActive && r.fields.isActive.value) === 1,
+    sortOrder: (r.fields.sortOrder && r.fields.sortOrder.value) || 0,
   };
 }
 function recordToClue(r) {
@@ -493,6 +558,51 @@ const CloudKitStore = {
     });
     return { totals: resp.totals, timeSeries: resp.timeSeries, perHunt: resp.perHunt };
   },
+
+  async setGiftShopEnabled(venueId, enabled) {
+    await apiPost('/api/venues/set-giftshop-enabled', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      venueId, enabled,
+    });
+  },
+
+  // GiftShopItem is World-readable, same posture as Hunt/Clue — read straight from
+  // CloudKit like huntsForVenue does, no backend hop needed. Writes still go through
+  // the S2S endpoints below.
+  async giftShopItems(venueId) {
+    const response = await publicDB.performQuery({
+      recordType: 'GiftShopItem',
+      filterBy: [{ fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(venueId) } }],
+    });
+    assertNoErrors(response);
+    return response.records.map(recordToGiftShopItem).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  },
+
+  async saveGiftShopItem(venueId, itemId, itemChangeTag, data) {
+    const resp = await apiPost('/api/giftshop/items/save', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      itemId: itemId || null,
+      venueId, itemChangeTag, data,
+    });
+    return resp.itemId;
+  },
+
+  async deleteGiftShopItem(itemId) {
+    await apiPost('/api/giftshop/items/delete', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      itemId,
+    });
+  },
+
+  // Staff-side redemption: typed code + the venue context the manager/admin is
+  // authorized for — see functions/api/giftshop/redemption/complete.js.
+  async completeRedemption(venueId, code) {
+    const resp = await apiPost('/api/giftshop/redemption/complete', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      venueId, code,
+    });
+    return { item: resp.item, visitorDisplayName: resp.visitorDisplayName, remainingBalance: resp.remainingBalance };
+  },
 };
 
 function identityToManager(identity) {
@@ -534,6 +644,7 @@ const state = {
   // "venue:<id>" and "venue:<id>::folder:<name>" keys used here would otherwise
   // collide with that screen's per-folder collapse keys.
   collapsedStatsGroups: new Set(),
+  giftShopVenueFilter: '',
   // Which sidebar item should read as active. Set explicitly by each nav
   // entry point (goToVenues/goToHuntsHome/goToUsers/goToSettings) rather
   // than inferred from the current view name, since view-hunts (a single
@@ -607,6 +718,7 @@ function renderSidebar() {
   const navVenues = document.getElementById('nav-venues');
   const navHuntsHome = document.getElementById('nav-hunts-home');
   const navStats = document.getElementById('nav-stats');
+  const navGiftShop = document.getElementById('nav-giftshop');
   const navUsers = document.getElementById('nav-users');
   const navSettings = document.getElementById('nav-settings');
   navVenues.title = 'Venues';
@@ -618,6 +730,9 @@ function renderSidebar() {
   navStats.title = 'Statistics';
   navStats.innerHTML = `${icon('chartBar')} <span class="nav-label">Statistics</span>`;
   navStats.addEventListener('click', goToStats);
+  navGiftShop.title = 'Gift Shop';
+  navGiftShop.innerHTML = `${icon('boxSeam')} <span class="nav-label">Gift Shop</span>`;
+  navGiftShop.addEventListener('click', goToGiftShop);
   navUsers.title = 'Users';
   navUsers.innerHTML = `${icon('person')} <span class="nav-label">Users</span>`;
   navUsers.addEventListener('click', goToUsers);
@@ -673,7 +788,7 @@ function renderSidebar() {
 }
 
 function setActiveNav() {
-  ['venues', 'hunts-home', 'stats', 'users', 'settings'].forEach((id) => {
+  ['venues', 'hunts-home', 'stats', 'giftshop', 'users', 'settings'].forEach((id) => {
     const el = document.getElementById(`nav-${id}`);
     if (el) el.classList.toggle('active', id === state.activeNavSection);
   });
@@ -836,12 +951,16 @@ async function renderVenuesGrid() {
   }
 
   grid.innerHTML = filtered.map(v => `
-    <div class="card glass" data-venue="${v.id}">
+    <div class="card glass venue-card" data-venue="${v.id}">
+      ${CURRENT_MANAGER.isAdmin ? `
+        <button class="btn-icon-sm venue-settings-btn" type="button" title="Venue Settings" data-venue-settings="${v.id}">${icon('gear')}</button>
+      ` : ''}
       <div class="card-icon">${icon('building')}</div>
       <div class="card-title">${escapeHTML(v.name)}</div>
       <div class="card-sub">${escapeHTML(v.address)}</div>
       <div class="card-foot">
         <span class="badge">${venueHuntCounts[v.id] ?? 0} hunt${venueHuntCounts[v.id] === 1 ? '' : 's'}</span>
+        ${v.giftShopEnabled ? `<span class="btn-icon-sm" style="pointer-events:none;" title="Gift shop enabled">${icon('boxSeam')}</span>` : ''}
         ${icon('chevronRight')}
       </div>
     </div>
@@ -849,6 +968,54 @@ async function renderVenuesGrid() {
 
   grid.querySelectorAll('[data-venue]').forEach(card => {
     card.addEventListener('click', () => goToHunts(card.dataset.venue));
+  });
+  grid.querySelectorAll('[data-venue-settings]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const venue = filtered.find(v => v.id === btn.dataset.venueSettings);
+      if (venue) showVenueSettingsForm(venue);
+    });
+  });
+}
+
+function showVenueSettingsForm(venue) {
+  const card = document.getElementById('alert-card');
+  card.innerHTML = `
+    <div class="alert-icon">${icon('gear')}</div>
+    <h2 class="alert-title">${escapeHTML(venue.name)}</h2>
+    <div class="field" style="width:100%;text-align:left;margin-bottom:0;">
+      <label class="label" style="display:flex;align-items:center;gap:8px;font-weight:500;">
+        <input type="checkbox" id="venue-giftshop-toggle" ${venue.giftShopEnabled ? 'checked' : ''} style="width:auto;" /> Enable Gift Shop
+      </label>
+    </div>
+    <p class="alert-msg" id="venue-settings-error" style="display:none;color:var(--red);"></p>
+    <div class="alert-actions">
+      <button class="btn btn-glass" type="button" id="venue-settings-cancel">Cancel</button>
+      <button class="btn btn-prominent" type="button" id="venue-settings-save">Save</button>
+    </div>
+  `;
+  document.getElementById('overlay').classList.add('open');
+
+  const errorEl = document.getElementById('venue-settings-error');
+  const saveBtn = document.getElementById('venue-settings-save');
+  document.getElementById('venue-settings-cancel').addEventListener('click', closeOverlay);
+
+  saveBtn.addEventListener('click', async () => {
+    const enabled = document.getElementById('venue-giftshop-toggle').checked;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Saving…`;
+    try {
+      await Store.setGiftShopEnabled(venue.id, enabled);
+      closeOverlay();
+      showToast('checkCircle', 'Venue Updated');
+      await updateGiftShopNavVisibility();
+      await renderVenuesGrid();
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = 'Save';
+      errorEl.textContent = err.message || 'Something went wrong talking to CloudKit.';
+      errorEl.style.display = '';
+    }
   });
 }
 
@@ -1508,6 +1675,281 @@ function timeSeriesChartSVG(timeSeries) {
   `;
 }
 
+// ---- Gift Shop ----
+// Only shows venues with giftShopEnabled — the nav item itself is hidden entirely
+// when none of the signed-in manager/admin's venues have it on (updateGiftShopNavVisibility).
+
+let giftShopDataCache = null; // { venueId, items } — see renderStatsView's statsDataCache for why
+
+async function goToGiftShop() {
+  state.venueId = null;
+  state.huntId = null;
+  state.activeNavSection = 'giftshop';
+  renderPageHeader([]);
+  showView('giftshop');
+  await renderGiftShopView();
+}
+
+async function renderGiftShopView() {
+  const bodyEl = document.getElementById('giftshop-body');
+  bodyEl.innerHTML = loadingHTML('Loading gift shop…');
+  giftShopDataCache = null;
+
+  let venues = [];
+  try {
+    const all = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    venues = all.filter(v => v.giftShopEnabled);
+  } catch (err) {
+    bodyEl.innerHTML = errorHTML('Could not load the gift shop', err);
+    bodyEl.querySelector('#retry-btn').addEventListener('click', renderGiftShopView);
+    return;
+  }
+
+  const venueFilterEl = document.getElementById('giftshop-venue-filter');
+  if (venues.length > 1) {
+    if (!venues.some(v => v.id === state.giftShopVenueFilter)) state.giftShopVenueFilter = venues[0].id;
+    venueFilterEl.style.display = '';
+    venueFilterEl.innerHTML = venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.giftShopVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('');
+    venueFilterEl.onchange = () => {
+      state.giftShopVenueFilter = venueFilterEl.value;
+      renderGiftShopView();
+    };
+  } else {
+    venueFilterEl.style.display = 'none';
+    state.giftShopVenueFilter = venues[0] ? venues[0].id : '';
+  }
+
+  if (venues.length === 0) {
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(emptyState(
+      'boxSeam', 'No Gift Shop Venues',
+      CURRENT_MANAGER.isAdmin
+        ? 'Enable the gift shop for a venue from the Venues page to get started.'
+        : "None of your venues have the gift shop enabled yet. Ask an admin to turn it on."
+    ));
+    return;
+  }
+
+  const venueId = state.giftShopVenueFilter;
+  let items;
+  try {
+    items = await Store.giftShopItems(venueId);
+  } catch (err) {
+    bodyEl.innerHTML = errorHTML('Could not load the gift shop', err);
+    bodyEl.querySelector('#retry-btn').addEventListener('click', renderGiftShopView);
+    return;
+  }
+
+  giftShopDataCache = { venueId, items };
+
+  bodyEl.innerHTML = `
+    <div class="panel glass">
+      <p class="panel-title">Redeem a Code</p>
+      <p class="giftshop-redeem-hint">Ask the visitor for the 5-letter code on their screen.</p>
+      <div class="giftshop-redeem-row">
+        <input type="text" id="giftshop-code-input" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button class="btn btn-prominent" type="button" id="giftshop-redeem-btn">Redeem</button>
+      </div>
+      <div id="giftshop-redeem-result"></div>
+    </div>
+    <div class="panel glass">
+      <p class="panel-title">
+        <span>Catalog</span>
+        <button class="btn btn-glass" type="button" id="btn-add-giftshop-item">${icon('plus')} Add Item</button>
+      </p>
+      <div id="giftshop-catalog-list">
+        ${items.length ? items.map(giftShopItemRowHTML).join('') : `<div class="folder-empty-hint">No items yet — add one to get started.</div>`}
+      </div>
+    </div>
+  `;
+
+  wireGiftShopRedeemPanel(venueId);
+
+  document.getElementById('btn-add-giftshop-item').addEventListener('click', () => showGiftShopItemForm(venueId, null));
+  bodyEl.querySelectorAll('[data-item]').forEach((row) => {
+    const item = items.find(i => i.id === row.dataset.item);
+    if (!item) return;
+    row.querySelector('.btn-edit-item').addEventListener('click', () => showGiftShopItemForm(venueId, item));
+    row.querySelector('.btn-delete-item').addEventListener('click', () => confirmDeleteGiftShopItem(item));
+  });
+}
+
+const REDEMPTION_ERROR_MESSAGES = {
+  no_match: "That code doesn't match a pending redemption at this venue — it may have expired, or check with the visitor for the current code.",
+  ambiguous_match: 'That code matched more than one pending redemption — ask the visitor to wait a few seconds for their code to refresh and try again.',
+  insufficient_balance: "This visitor's trophy balance changed and is no longer enough to cover this item.",
+  forbidden: "You're not authorized to redeem codes for this venue.",
+};
+function redemptionErrorMessage(err) {
+  return REDEMPTION_ERROR_MESSAGES[err.message] || err.message || 'Could not redeem that code.';
+}
+
+function wireGiftShopRedeemPanel(venueId) {
+  const codeInput = document.getElementById('giftshop-code-input');
+  const redeemBtn = document.getElementById('giftshop-redeem-btn');
+  const resultEl = document.getElementById('giftshop-redeem-result');
+
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 5);
+  });
+  codeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+  });
+  codeInput.focus();
+
+  const submit = async () => {
+    const code = codeInput.value.trim();
+    if (code.length !== 5) {
+      resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} Codes are 5 letters — check with the visitor and try again.</div>`;
+      return;
+    }
+    redeemBtn.disabled = true;
+    codeInput.disabled = true;
+    resultEl.innerHTML = '';
+    try {
+      const result = await Store.completeRedemption(venueId, code);
+      resultEl.innerHTML = `
+        <div class="giftshop-redeem-success">
+          ${icon('checkCircle')}
+          Redeemed <strong>${escapeHTML(result.item.name)}</strong>${result.visitorDisplayName ? ` for ${escapeHTML(result.visitorDisplayName)}` : ''}.
+          Remaining balance: ${result.remainingBalance}.
+        </div>
+      `;
+      codeInput.value = '';
+    } catch (err) {
+      resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} ${escapeHTML(redemptionErrorMessage(err))}</div>`;
+    } finally {
+      redeemBtn.disabled = false;
+      codeInput.disabled = false;
+      codeInput.focus();
+    }
+  };
+  redeemBtn.addEventListener('click', submit);
+}
+
+function giftShopItemRowHTML(item) {
+  return `
+    <div class="hunt-row glass" data-item="${item.id}">
+      <div class="hr-icon">${icon(item.kind === 'discount' ? 'tag' : 'boxSeam')}</div>
+      <div class="hr-body">
+        <div class="hr-title">${escapeHTML(item.name)}${item.isActive ? '' : ` <span class="folder-count">Inactive</span>`}</div>
+        <div class="hr-sub">${item.trophyCost} troph${item.trophyCost === 1 ? 'y' : 'ies'} · ${item.kind === 'discount' ? 'Discount' : 'Item'}</div>
+      </div>
+      <div class="hr-actions">
+        <button class="btn-icon-sm btn-edit-item" type="button" title="Edit">${icon('pencil')}</button>
+        <button class="btn-icon-sm btn-delete-item" type="button" title="Delete">${icon('trash')}</button>
+      </div>
+    </div>
+  `;
+}
+
+function showGiftShopItemForm(venueId, existingItem) {
+  const isEdit = !!existingItem;
+  const card = document.getElementById('alert-card');
+  card.innerHTML = `
+    <div class="alert-icon">${icon('boxSeam')}</div>
+    <h2 class="alert-title">${isEdit ? 'Edit Item' : 'Add Item'}</h2>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Name</label>
+      <input type="text" id="item-form-name" value="${isEdit ? escapeAttr(existingItem.name) : ''}" placeholder="e.g. Dinosaur Plush Toy" />
+    </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Description <span class="label-optional">(optional)</span></label>
+      <input type="text" id="item-form-desc" value="${isEdit ? escapeAttr(existingItem.description || '') : ''}" placeholder="Shown to visitors in the app" />
+    </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Kind</label>
+      <select id="item-form-kind">
+        <option value="item" ${!isEdit || existingItem.kind !== 'discount' ? 'selected' : ''}>Item</option>
+        <option value="discount" ${isEdit && existingItem.kind === 'discount' ? 'selected' : ''}>Discount</option>
+      </select>
+    </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Trophy Cost</label>
+      <input type="number" id="item-form-cost" min="0" step="1" value="${isEdit ? existingItem.trophyCost : ''}" placeholder="0" />
+    </div>
+    ${isEdit ? `
+      <div class="field" style="width:100%;text-align:left;margin-bottom:0;">
+        <label class="label" style="display:flex;align-items:center;gap:8px;font-weight:500;">
+          <input type="checkbox" id="item-form-active" ${existingItem.isActive ? 'checked' : ''} style="width:auto;" /> Active
+        </label>
+      </div>
+    ` : ''}
+    <p class="alert-msg" id="item-form-error" style="display:none;color:var(--red);"></p>
+    <div class="alert-actions">
+      <button class="btn btn-glass" type="button" id="item-form-cancel">Cancel</button>
+      <button class="btn btn-prominent" type="button" id="item-form-save">${isEdit ? 'Save' : 'Add Item'}</button>
+    </div>
+  `;
+  document.getElementById('overlay').classList.add('open');
+
+  const nameInput = document.getElementById('item-form-name');
+  const errorEl = document.getElementById('item-form-error');
+  const saveBtn = document.getElementById('item-form-save');
+  nameInput.focus();
+  document.getElementById('item-form-cancel').addEventListener('click', closeOverlay);
+
+  saveBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      errorEl.textContent = 'Give this item a name before saving it.';
+      errorEl.style.display = '';
+      nameInput.focus();
+      return;
+    }
+    const data = {
+      name,
+      description: document.getElementById('item-form-desc').value.trim(),
+      kind: document.getElementById('item-form-kind').value,
+      trophyCost: Number(document.getElementById('item-form-cost').value) || 0,
+      isActive: isEdit ? document.getElementById('item-form-active').checked : true,
+    };
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Saving…`;
+    try {
+      await Store.saveGiftShopItem(venueId, existingItem ? existingItem.id : null, existingItem ? existingItem.recordChangeTag : null, data);
+      closeOverlay();
+      showToast('checkCircle', isEdit ? 'Item Updated' : 'Item Added');
+      await renderGiftShopView();
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = isEdit ? 'Save' : 'Add Item';
+      errorEl.textContent = err.message || 'Something went wrong talking to CloudKit.';
+      errorEl.style.display = '';
+    }
+  });
+}
+
+function confirmDeleteGiftShopItem(item) {
+  showAlert({
+    icon: 'trash', tone: 'danger', title: 'Delete This Item?',
+    message: `“${item.name}” will be removed from the catalog. This can't be undone.`,
+    actions: [
+      { label: 'Cancel', style: 'btn-glass', onClick: closeOverlay },
+      {
+        label: 'Delete', style: 'btn-prominent danger-fill',
+        onClick: async () => {
+          try {
+            await Store.deleteGiftShopItem(item.id);
+            closeOverlay();
+            showToast('checkCircle', 'Item Deleted');
+            await renderGiftShopView();
+          } catch (err) {
+            showAlert({
+              icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Delete Item',
+              message: err.message || 'Something went wrong talking to CloudKit.',
+              actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+            });
+          }
+        },
+      },
+    ],
+  });
+}
+
 async function goToUsers() {
   state.venueId = null;
   state.huntId = null;
@@ -1931,11 +2373,11 @@ async function openEditor(huntId, venueId) {
       document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId));
       return;
     }
-    state.draft = { title: h.title, description: h.description, folder: h.folder || '', clues: clueList.map(c => ({ ...c })) };
+    state.draft = { title: h.title, description: h.description, folder: h.folder || '', trophies: h.trophies || 0, clues: clueList.map(c => ({ ...c })) };
     state.originalClueIds = new Set(clueList.map(c => c.id));
     state.huntChangeTag = h.recordChangeTag;
   } else {
-    state.draft = { title: '', description: '', folder: '', clues: [] };
+    state.draft = { title: '', description: '', folder: '', trophies: 0, clues: [] };
     state.originalClueIds = new Set();
     state.huntChangeTag = null;
   }
@@ -1944,10 +2386,13 @@ async function openEditor(huntId, venueId) {
 
   const titleInput = document.getElementById('input-hunt-title');
   const descInput = document.getElementById('input-hunt-desc');
+  const trophiesInput = document.getElementById('input-hunt-trophies');
   titleInput.value = state.draft.title;
   descInput.value = state.draft.description;
+  trophiesInput.value = state.draft.trophies || '';
   titleInput.oninput = (e) => { state.draft.title = e.target.value; renderPreview(); syncCrumbTitle(); };
   descInput.oninput = (e) => { state.draft.description = e.target.value; };
+  trophiesInput.oninput = (e) => { state.draft.trophies = Math.max(0, Math.floor(Number(e.target.value) || 0)); };
   renderHuntFolderField();
 
   const addBtn = document.getElementById('btn-add-clue');
@@ -2318,7 +2763,7 @@ async function saveHunt() {
     await Store.saveHunt(
       state.huntId,
       state.venueId,
-      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim() },
+      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim(), trophies: state.draft.trophies || 0 },
       state.draft.clues,
       state.originalClueIds,
       state.huntChangeTag
@@ -2458,7 +2903,25 @@ async function continueSignIn() {
     console.warn('Could not update user directory entry:', err);
   }
   renderSidebar();
+  await updateGiftShopNavVisibility();
   await enterAfterSignIn();
+}
+
+// The Gift Shop nav item only shows up if the signed-in manager/admin has at least one
+// venue with it enabled — re-run after sign-in and after toggling the setting so it
+// updates immediately rather than requiring a fresh sign-in.
+async function updateGiftShopNavVisibility() {
+  const navEl = document.getElementById('nav-giftshop');
+  if (!navEl) return;
+  try {
+    const venues = CURRENT_MANAGER.isAdmin
+      ? await Store.allVenues()
+      : await Store.venuesForManager(CURRENT_MANAGER.userRecordName);
+    navEl.style.display = venues.some(v => v.giftShopEnabled) ? '' : 'none';
+  } catch (err) {
+    console.warn('Could not check gift shop availability:', err);
+    navEl.style.display = 'none';
+  }
 }
 
 function promptForName() {
