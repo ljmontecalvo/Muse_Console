@@ -2375,7 +2375,11 @@ async function openEditor(huntId, venueId) {
   if (huntId) {
     let h, clueList;
     try {
-      h = huntsCache.find(x => x.id === huntId) || await Store.hunt(huntId);
+      // Always fetch fresh rather than trusting huntsCache here — the editor is about
+      // to overwrite this record, so it needs the current field values (not a
+      // possibly-stale cache from before a prior save) and, critically, the current
+      // recordChangeTag, or a save-after-a-save can fail with a conflict.
+      h = await Store.hunt(huntId);
       clueList = await Store.cluesForHunt(huntId);
     } catch (err) {
       document.getElementById('clue-list').innerHTML = errorHTML('Could not load this hunt', err);
@@ -2418,6 +2422,7 @@ async function openEditor(huntId, venueId) {
   cancelBtn.onclick = () => goToHunts(venueId);
 
   const saveBtn = document.getElementById('btn-save-hunt');
+  saveBtn.disabled = false;
   saveBtn.innerHTML = `${icon('checkCircle')} Save Changes`;
   saveBtn.onclick = saveHunt;
 
