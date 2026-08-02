@@ -984,7 +984,7 @@ function showVenueSettingsForm(venue) {
     <div class="alert-icon">${icon('gear')}</div>
     <h2 class="alert-title">${escapeHTML(venue.name)}</h2>
     <div class="field settings-toggle-row" style="width:100%;margin-bottom:0;">
-      <div>
+      <div style="text-align:left;">
         <label class="label" style="margin-bottom:2px;">Gift Shop</label>
         <div class="settings-desc">Let visitors earn trophies and redeem them here.</div>
       </div>
