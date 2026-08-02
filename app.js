@@ -983,10 +983,12 @@ function showVenueSettingsForm(venue) {
   card.innerHTML = `
     <div class="alert-icon">${icon('gear')}</div>
     <h2 class="alert-title">${escapeHTML(venue.name)}</h2>
-    <div class="field" style="width:100%;text-align:left;margin-bottom:0;">
-      <label class="label" style="display:flex;align-items:center;gap:8px;font-weight:500;">
-        <input type="checkbox" id="venue-giftshop-toggle" ${venue.giftShopEnabled ? 'checked' : ''} style="width:auto;" /> Enable Gift Shop
-      </label>
+    <div class="field settings-toggle-row" style="width:100%;margin-bottom:0;">
+      <div>
+        <label class="label" style="margin-bottom:2px;">Gift Shop</label>
+        <div class="settings-desc">Let visitors earn trophies and redeem them here.</div>
+      </div>
+      <button class="toggle-switch ${venue.giftShopEnabled ? 'on' : ''}" id="venue-giftshop-toggle" type="button" role="switch" aria-checked="${!!venue.giftShopEnabled}"></button>
     </div>
     <p class="alert-msg" id="venue-settings-error" style="display:none;color:var(--red);"></p>
     <div class="alert-actions">
@@ -1000,8 +1002,15 @@ function showVenueSettingsForm(venue) {
   const saveBtn = document.getElementById('venue-settings-save');
   document.getElementById('venue-settings-cancel').addEventListener('click', closeOverlay);
 
+  const giftShopToggle = document.getElementById('venue-giftshop-toggle');
+  giftShopToggle.addEventListener('click', () => {
+    const next = !giftShopToggle.classList.contains('on');
+    giftShopToggle.classList.toggle('on', next);
+    giftShopToggle.setAttribute('aria-checked', String(next));
+  });
+
   saveBtn.addEventListener('click', async () => {
-    const enabled = document.getElementById('venue-giftshop-toggle').checked;
+    const enabled = giftShopToggle.classList.contains('on');
     saveBtn.disabled = true;
     saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Saving…`;
     try {
