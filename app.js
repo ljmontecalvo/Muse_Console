@@ -650,6 +650,10 @@ const state = {
   venueId: null,
   huntId: null,
   isNewHunt: false,
+  // Where the editor was opened from — 'venue' (a single venue's Hunts screen) or
+  // 'home' (the All Hunts screen). Cancel/Save/Delete need to return you to whichever
+  // list you actually came from, not always the single-venue one.
+  huntEditorOrigin: 'venue',
   draft: { title: '', description: '', folder: '', clues: [] },
   originalClueIds: new Set(),
   huntChangeTag: null,
@@ -1255,7 +1259,7 @@ async function renderHuntsHomeList() {
   listEl.querySelectorAll('.hunt-row').forEach((row) => {
     const huntId = row.dataset.huntHome;
     const venueId = row.dataset.venue;
-    row.addEventListener('click', () => openEditor(huntId, venueId));
+    row.addEventListener('click', () => openEditor(huntId, venueId, 'home'));
 
     const actionsEl = row.querySelector('.hr-actions');
     actionsEl.addEventListener('click', (e) => e.stopPropagation());
@@ -2418,19 +2422,31 @@ async function renderHuntsList() {
   });
 }
 
-async function openEditor(huntId, venueId) {
+// Returns to whichever hunts list the editor was actually opened from — see
+// state.huntEditorOrigin.
+function backToHuntsList() {
+  return state.huntEditorOrigin === 'home' ? goToHuntsHome() : goToHunts(state.venueId);
+}
+
+async function openEditor(huntId, venueId, origin = 'venue') {
   state.venueId = venueId;
   state.huntId = huntId;
   state.isNewHunt = !huntId;
   state.expandedClueId = null;
+  state.huntEditorOrigin = origin;
 
   const venue = venuesCache.find(v => v.id === venueId) || await Store.venue(venueId);
 
-  renderPageHeader([
-    { label: 'Venues', onClick: goToVenues },
-    { label: escapeHTML(venue.name), onClick: () => goToHunts(venueId) },
-    { label: state.isNewHunt ? 'New Hunt' : 'Loading…' },
-  ]);
+  renderPageHeader(origin === 'home'
+    ? [
+        { label: 'Hunts', onClick: goToHuntsHome },
+        { label: state.isNewHunt ? 'New Hunt' : 'Loading…' },
+      ]
+    : [
+        { label: 'Venues', onClick: goToVenues },
+        { label: escapeHTML(venue.name), onClick: () => goToHunts(venueId) },
+        { label: state.isNewHunt ? 'New Hunt' : 'Loading…' },
+      ]);
   document.getElementById('editor-title').textContent = state.isNewHunt ? 'New Hunt' : 'Edit Hunt';
   document.getElementById('pv-venue-name').textContent = venue.name;
 
@@ -2448,7 +2464,7 @@ async function openEditor(huntId, venueId) {
       clueList = await Store.cluesForHunt(huntId);
     } catch (err) {
       document.getElementById('clue-list').innerHTML = errorHTML('Could not load this hunt', err);
-      document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId));
+      document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId, origin));
       return;
     }
     state.draft = { title: h.title, description: h.description, folder: h.folder || '', trophies: h.trophies || 0, difficulty: h.difficulty || 'regular', clues: clueList.map(c => ({ ...c })) };
@@ -2498,7 +2514,7 @@ async function openEditor(huntId, venueId) {
 
   const cancelBtn = document.getElementById('btn-cancel-hunt');
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = () => goToHunts(venueId);
+  cancelBtn.onclick = backToHuntsList;
 
   const saveBtn = document.getElementById('btn-save-hunt');
   saveBtn.disabled = false;
@@ -2862,7 +2878,7 @@ async function saveHunt() {
       state.huntChangeTag
     );
     showToast('checkCircle', 'Changes Saved');
-    await goToHunts(state.venueId);
+    await backToHuntsList();
   } catch (err) {
     showAlert({
       icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Save',
@@ -2885,7 +2901,7 @@ function confirmDeleteHunt() {
         try {
           await Store.deleteHunt(state.huntId);
           showToast('trash', 'Hunt Deleted');
-          await goToHunts(state.venueId);
+          await backToHuntsList();
         } catch (err) {
           showAlert({
             icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Delete',
