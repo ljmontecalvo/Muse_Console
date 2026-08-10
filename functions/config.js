@@ -55,7 +55,12 @@
 //     `visitor_<appleUserID>`. Queryable index on appleUserID.
 //   - VisitorTrophyBalance: visitorReference (Reference -> Visitor, action None),
 //     venueReference (Reference -> Venue, action None), balance (Int64). S2S only.
-//     recordName convention: `balance_<visitorId>_<venueId>`.
+//     recordName convention: `balance_<visitorId>_<venueId>`. Queryable index on
+//     visitorReference — functions/api/visitor/balances.js filters on it (this was
+//     originally left off this doc and silently broke the Venues balance screen:
+//     ckQuery() used to swallow a rejected/unindexed query as an empty result rather
+//     than an error, so award-trophies.js kept crediting balances successfully while
+//     balances.js always read back zero. ckQuery now throws on that case instead).
 //   - TrophyTransaction: visitorReference (Reference -> Visitor, action None),
 //     venueReference (Reference -> Venue, action None), type (String:
 //     "award_hunt_completion" | "redeem_item" | "admin_adjustment"), amount (Int64,

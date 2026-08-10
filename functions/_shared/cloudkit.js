@@ -85,7 +85,15 @@ export async function ckQuery({ privateKey, keyId, base, recordType, filterBy, s
   if (filterBy) query.filterBy = filterBy;
   if (sortBy) query.sortBy = sortBy;
   const json = await ckPost({ privateKey, keyId, path: `${base}/records/query`, body: { query } });
-  return json.records || [];
+  // A rejected query (e.g. a filter/sort field that isn't marked Queryable/Sortable in
+  // the schema) comes back with no `records` key at all, not an empty array — treating
+  // the two the same silently hides real failures as "no results". An empty but valid
+  // result set is still `records: []`, which is truthy, so this only fires on an actual
+  // CloudKit-reported error.
+  if (!json.records) {
+    throw new Error(`CloudKit query failed for ${recordType}: ${json.reason || json.serverErrorCode || 'unknown error'}`);
+  }
+  return json.records;
 }
 
 // operations: [{ operationType: 'create'|'update'|'delete', record: {...} }]
