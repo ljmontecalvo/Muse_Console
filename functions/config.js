@@ -45,10 +45,19 @@
 //   - GiftShopItem: venueReference (Reference -> Venue, action None), name (String),
 //     description (String, optional), trophyCost (Int64), kind (String: "item" or
 //     "discount" — free-form metadata, not enforced, so a third kind can be added later
-//     without a schema change), isActive (Int64, 0/1), sortOrder (Int64). Same read
-//     posture as Hunt/Venue (both iOS and the console read the active catalog directly);
-//     writes only via functions/api/giftshop/items/*.js. Queryable index on
+//     without a schema change), isActive (Int64, 0/1), sortOrder (Int64),
+//     totalRedemptionLimit (Int64, 0 = unlimited), perVisitorRedemptionLimit (Int64,
+//     0 = unlimited), totalRedeemedCount (Int64, default 0 — a running counter owned
+//     only by functions/_shared/redemptionLimits.js; never written by items/save.js).
+//     Same read posture as Hunt/Venue (both iOS and the console read the active catalog
+//     directly); writes only via functions/api/giftshop/items/*.js. Queryable index on
 //     venueReference.
+//   - VisitorItemRedemptionCount: itemReference (Reference -> GiftShopItem, action
+//     None), visitorReference (Reference -> Visitor, action None), count (Int64). S2S
+//     only, same posture as VisitorTrophyBalance. recordName convention:
+//     `itemcount_<itemId>_<visitorId>` — deterministic, so it's always fetched
+//     directly (functions/_shared/redemptionLimits.js) rather than queried, and needs
+//     no Queryable index at all.
 //   - Visitor: appleUserID (String), displayName (String, optional), email (String,
 //     optional). Security Roles -> World: no access, Authenticated: no access — S2S
 //     only, same posture as ClueTag/HuntEvent. recordName convention:

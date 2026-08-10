@@ -29,8 +29,10 @@ const MockStore = (() => {
     { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '', trophies: 0, difficulty: 'challenging' },
   ];
   let giftShopItemsSeed = [
-    { id: 'item_1', venueId: 'venue_1', name: 'Dinosaur Plush Toy', description: 'A soft, huggable T. rex.', trophyCost: 20, kind: 'item', isActive: true, sortOrder: 0 },
-    { id: 'item_2', venueId: 'venue_1', name: '10% Off Gift Shop', description: 'Applies to any single purchase.', trophyCost: 10, kind: 'discount', isActive: true, sortOrder: 1 },
+    { id: 'item_1', venueId: 'venue_1', name: 'Dinosaur Plush Toy', description: 'A soft, huggable T. rex.', trophyCost: 20, kind: 'item', isActive: true, sortOrder: 0, totalRedemptionLimit: 0, perVisitorRedemptionLimit: 0, totalRedeemedCount: 0 },
+    // Seeded with limits already set so mock mode can demo the "X/Y redeemed" and
+    // sold-out states without needing to configure anything by hand.
+    { id: 'item_2', venueId: 'venue_1', name: '10% Off Gift Shop', description: 'Applies to any single purchase.', trophyCost: 10, kind: 'discount', isActive: true, sortOrder: 1, totalRedemptionLimit: 5, perVisitorRedemptionLimit: 1, totalRedeemedCount: 3 },
   ];
   // Demo redemption so the "Redeem a Code" panel has something to test against in
   // mock mode, since there's no real iOS device generating live codes here.
@@ -38,10 +40,13 @@ const MockStore = (() => {
   console.info(`[Mock Mode] Demo gift shop redemption code for Riverside Natural History Museum: ${DEMO_REDEMPTION_CODE}`);
   let pendingRedemptions = [
     {
-      id: 'redemption_demo', venueId: 'venue_1', itemName: 'Dinosaur Plush Toy', itemKind: 'item',
+      id: 'redemption_demo', venueId: 'venue_1', itemId: 'item_1', itemName: 'Dinosaur Plush Toy', itemKind: 'item',
       trophyCost: 20, code: DEMO_REDEMPTION_CODE, visitorDisplayName: 'Demo Visitor', status: 'pending',
     },
   ];
+  // Mock stand-in for VisitorItemRedemptionCount — keyed by `${itemId}_${visitorDisplayName}`
+  // since mock mode has no real visitor identity, just per-redemption display names.
+  let mockVisitorItemCounts = {};
   let clues = [
     { id: 'clue_1', huntId: 'hunt_1', order: 0, title: 'Welcome', body: 'Find the massive skeleton greeting visitors at the entrance.', nfcTagID: 'K7$Q2M9!XB4@RT8&WZ3P', tagStatus: 'installed' },
     { id: 'clue_2', huntId: 'hunt_1', order: 1, title: 'Frozen in Time', body: 'Search for the creature preserved mid-stride in solid amber.', nfcTagID: 'H2#N8V5*JD1%LF6+YC9K', tagStatus: 'requested' },
@@ -257,10 +262,26 @@ const MockStore = (() => {
     },
 
     // Matches against the demo pendingRedemptions seeded above — see
-    // DEMO_REDEMPTION_CODE, logged to the console on load.
+    // DEMO_REDEMPTION_CODE, logged to the console on load. Mirrors the real
+    // redemption/complete.js's re-check-then-increment order for the two limits.
     async completeRedemption(venueId, code) {
       const redemption = pendingRedemptions.find(r => r.venueId === venueId && r.status === 'pending' && r.code === code.toUpperCase());
       if (!redemption) throw new Error('no_match');
+
+      const item = giftShopItemsSeed.find(i => i.id === redemption.itemId);
+      if (item) {
+        if (item.totalRedemptionLimit > 0 && item.totalRedeemedCount >= item.totalRedemptionLimit) {
+          throw new Error('item_limit_reached');
+        }
+        const visitorKey = `${item.id}_${redemption.visitorDisplayName}`;
+        const visitorCount = mockVisitorItemCounts[visitorKey] || 0;
+        if (item.perVisitorRedemptionLimit > 0 && visitorCount >= item.perVisitorRedemptionLimit) {
+          throw new Error('visitor_limit_reached');
+        }
+        item.totalRedeemedCount = (item.totalRedeemedCount || 0) + 1;
+        mockVisitorItemCounts[visitorKey] = visitorCount + 1;
+      }
+
       redemption.status = 'completed';
       return {
         item: { name: redemption.itemName, kind: redemption.itemKind, trophyCost: redemption.trophyCost },
@@ -337,6 +358,9 @@ function recordToGiftShopItem(r) {
     kind: (r.fields.kind && r.fields.kind.value) || 'item',
     isActive: (r.fields.isActive && r.fields.isActive.value) === 1,
     sortOrder: (r.fields.sortOrder && r.fields.sortOrder.value) || 0,
+    totalRedemptionLimit: (r.fields.totalRedemptionLimit && r.fields.totalRedemptionLimit.value) || 0,
+    perVisitorRedemptionLimit: (r.fields.perVisitorRedemptionLimit && r.fields.perVisitorRedemptionLimit.value) || 0,
+    totalRedeemedCount: (r.fields.totalRedeemedCount && r.fields.totalRedeemedCount.value) || 0,
   };
 }
 function recordToClue(r) {
@@ -1790,6 +1814,8 @@ const REDEMPTION_ERROR_MESSAGES = {
   no_match: "That code doesn't match a pending redemption at this venue — it may have expired, or check with the visitor for the current code.",
   ambiguous_match: 'That code matched more than one pending redemption — ask the visitor to wait a few seconds for their code to refresh and try again.',
   insufficient_balance: "This visitor's trophy balance changed and is no longer enough to cover this item.",
+  item_limit_reached: 'This item has reached its total redemption limit and is sold out.',
+  visitor_limit_reached: 'This visitor has already redeemed the maximum allowed of this item.',
   forbidden: "You're not authorized to redeem codes for this venue.",
 };
 function redemptionErrorMessage(err) {
@@ -1840,12 +1866,16 @@ function wireGiftShopRedeemPanel(venueId) {
 }
 
 function giftShopItemRowHTML(item) {
+  const soldOut = item.totalRedemptionLimit > 0 && item.totalRedeemedCount >= item.totalRedemptionLimit;
+  const limitParts = [];
+  if (item.totalRedemptionLimit > 0) limitParts.push(`${item.totalRedeemedCount}/${item.totalRedemptionLimit} redeemed`);
+  if (item.perVisitorRedemptionLimit > 0) limitParts.push(`max ${item.perVisitorRedemptionLimit} per visitor`);
   return `
     <div class="hunt-row glass" data-item="${item.id}">
       <div class="hr-icon">${icon(item.kind === 'discount' ? 'tag' : 'boxSeam')}</div>
       <div class="hr-body">
-        <div class="hr-title">${escapeHTML(item.name)}${item.isActive ? '' : ` <span class="folder-count">Inactive</span>`}</div>
-        <div class="hr-sub">${item.trophyCost} troph${item.trophyCost === 1 ? 'y' : 'ies'} · ${item.kind === 'discount' ? 'Discount' : 'Item'}</div>
+        <div class="hr-title">${escapeHTML(item.name)}${item.isActive ? '' : ` <span class="folder-count">Inactive</span>`}${soldOut ? ` <span class="folder-count">Sold Out</span>` : ''}</div>
+        <div class="hr-sub">${item.trophyCost} troph${item.trophyCost === 1 ? 'y' : 'ies'} · ${item.kind === 'discount' ? 'Discount' : 'Item'}${limitParts.length ? ` · ${limitParts.join(' · ')}` : ''}</div>
       </div>
       <div class="hr-actions">
         <button class="btn-icon-sm btn-edit-item" type="button" title="Edit">${icon('pencil')}</button>
@@ -1871,7 +1901,7 @@ function showGiftShopItemForm(venueId, existingItem) {
     </div>
     <div class="field" style="width:100%;text-align:left;">
       <label class="label">Kind</label>
-      <select id="item-form-kind">
+      <select id="item-form-kind" class="folder-select">
         <option value="item" ${!isEdit || existingItem.kind !== 'discount' ? 'selected' : ''}>Item</option>
         <option value="discount" ${isEdit && existingItem.kind === 'discount' ? 'selected' : ''}>Discount</option>
       </select>
@@ -1880,11 +1910,19 @@ function showGiftShopItemForm(venueId, existingItem) {
       <label class="label">Trophy Cost</label>
       <input type="number" id="item-form-cost" min="0" step="1" value="${isEdit ? existingItem.trophyCost : ''}" placeholder="0" />
     </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Total Redemption Limit <span class="label-optional">(optional)</span></label>
+      <input type="number" id="item-form-total-limit" min="0" step="1" value="${isEdit && existingItem.totalRedemptionLimit ? existingItem.totalRedemptionLimit : ''}" placeholder="Unlimited" />
+      ${isEdit && existingItem.totalRedeemedCount ? `<div class="settings-desc" style="margin-top:6px;">${existingItem.totalRedeemedCount} redeemed so far</div>` : ''}
+    </div>
+    <div class="field" style="width:100%;text-align:left;">
+      <label class="label">Per-Visitor Limit <span class="label-optional">(optional)</span></label>
+      <input type="number" id="item-form-visitor-limit" min="0" step="1" value="${isEdit && existingItem.perVisitorRedemptionLimit ? existingItem.perVisitorRedemptionLimit : ''}" placeholder="Unlimited" />
+    </div>
     ${isEdit ? `
-      <div class="field" style="width:100%;text-align:left;margin-bottom:0;">
-        <label class="label" style="display:flex;align-items:center;gap:8px;font-weight:500;">
-          <input type="checkbox" id="item-form-active" ${existingItem.isActive ? 'checked' : ''} style="width:auto;" /> Active
-        </label>
+      <div class="field settings-toggle-row" style="width:100%;margin-bottom:0;">
+        <label class="label" style="margin-bottom:0;">Active</label>
+        <button class="toggle-switch ${existingItem.isActive ? 'on' : ''}" id="item-form-active" type="button" role="switch" aria-checked="${!!existingItem.isActive}"></button>
       </div>
     ` : ''}
     <p class="alert-msg" id="item-form-error" style="display:none;color:var(--red);"></p>
@@ -1901,6 +1939,15 @@ function showGiftShopItemForm(venueId, existingItem) {
   nameInput.focus();
   document.getElementById('item-form-cancel').addEventListener('click', closeOverlay);
 
+  const activeToggle = document.getElementById('item-form-active');
+  if (activeToggle) {
+    activeToggle.addEventListener('click', () => {
+      const next = !activeToggle.classList.contains('on');
+      activeToggle.classList.toggle('on', next);
+      activeToggle.setAttribute('aria-checked', String(next));
+    });
+  }
+
   saveBtn.addEventListener('click', async () => {
     const name = nameInput.value.trim();
     if (!name) {
@@ -1914,7 +1961,9 @@ function showGiftShopItemForm(venueId, existingItem) {
       description: document.getElementById('item-form-desc').value.trim(),
       kind: document.getElementById('item-form-kind').value,
       trophyCost: Number(document.getElementById('item-form-cost').value) || 0,
-      isActive: isEdit ? document.getElementById('item-form-active').checked : true,
+      totalRedemptionLimit: Number(document.getElementById('item-form-total-limit').value) || 0,
+      perVisitorRedemptionLimit: Number(document.getElementById('item-form-visitor-limit').value) || 0,
+      isActive: isEdit ? activeToggle.classList.contains('on') : true,
     };
 
     saveBtn.disabled = true;

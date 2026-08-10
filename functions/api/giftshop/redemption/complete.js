@@ -11,6 +11,7 @@
 import { ckFetchRecord, ckModifyRecords, ckQuery, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { authorizeVenueOrAdmin } from '../../../_shared/auth.js';
 import { deductTrophies, getBalance } from '../../../_shared/trophyLedger.js';
+import { checkRedemptionLimits, recordRedemptionForLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, windowIndexForTime } from '../../../_shared/redemptionCode.js';
 
 export async function onRequestPost({ request, env }) {
@@ -70,11 +71,26 @@ export async function onRequestPost({ request, env }) {
   const redemption = matches[0];
   const visitorRef = redemption.fields.visitorReference && redemption.fields.visitorReference.value;
   const visitorId = visitorRef && visitorRef.recordName;
+  const itemRef = redemption.fields.itemReference && redemption.fields.itemReference.value;
+  const itemId = itemRef && itemRef.recordName;
   const trophyCost = (redemption.fields.itemTrophyCostSnapshot && redemption.fields.itemTrophyCostSnapshot.value) || 0;
 
   const currentBalance = await getBalance(creds, visitorId, venueId);
   if (currentBalance < trophyCost) {
     return jsonResponse({ ok: false, error: 'insufficient_balance', balance: currentBalance, trophyCost }, 400);
+  }
+
+  // Re-check right before completing — the pre-flight check at redemption/start was a
+  // soft check with nothing reserved, so another visitor's redemption could have
+  // consumed the last slot in the meantime.
+  if (itemId) {
+    const item = await ckFetchRecord({ ...creds, recordName: itemId });
+    if (item) {
+      const limitCheck = await checkRedemptionLimits(creds, item, visitorId);
+      if (!limitCheck.ok) {
+        return jsonResponse({ ok: false, error: limitCheck.error }, 400);
+      }
+    }
   }
 
   const deductResult = await deductTrophies(creds, {
@@ -84,6 +100,9 @@ export async function onRequestPost({ request, env }) {
   });
   if (!deductResult.ok) {
     return jsonResponse({ ok: false, error: deductResult.error || 'deduction_failed' }, 400);
+  }
+  if (itemId) {
+    await recordRedemptionForLimits(creds, itemId, visitorId);
   }
 
   const updateResp = await ckModifyRecords({

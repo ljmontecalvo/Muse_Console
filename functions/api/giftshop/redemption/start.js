@@ -7,6 +7,7 @@
 import { ckFetchRecord, ckModifyRecords, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { requireVisitorSession } from '../../../_shared/visitorSession.js';
 import { getBalance } from '../../../_shared/trophyLedger.js';
+import { checkRedemptionLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, generateCodeSecret, windowIndexForTime, WINDOW_SECONDS } from '../../../_shared/redemptionCode.js';
 
 const REDEMPTION_TTL_SECONDS = 5 * 60;
@@ -49,6 +50,13 @@ export async function onRequestPost({ request, env }) {
   const balance = await getBalance(creds, visitorId, venueId);
   if (balance < trophyCost) {
     return jsonResponse({ ok: false, error: 'insufficient_balance', balance, trophyCost }, 400);
+  }
+
+  // Soft pre-flight check only — nothing is reserved yet, same reasoning as the
+  // balance check above. Re-checked and actually recorded at complete-time.
+  const limitCheck = await checkRedemptionLimits(creds, item, visitorId);
+  if (!limitCheck.ok) {
+    return jsonResponse({ ok: false, error: limitCheck.error }, 400);
   }
 
   const codeSecret = generateCodeSecret();

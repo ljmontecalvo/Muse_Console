@@ -36,6 +36,13 @@ export async function onRequestPost({ request, env }) {
 
   const trophyCost = Math.max(0, Math.floor(Number(data.trophyCost) || 0));
   const kind = VALID_KINDS.has(data.kind) ? data.kind : 'item';
+  // 0 means unlimited for both — same convention as Hunt.trophies defaulting to 0.
+  // totalRedeemedCount is intentionally never written here — it's a counter owned
+  // exclusively by functions/_shared/redemptionLimits.js, incremented only at actual
+  // redemption completion. Omitting it from an update payload leaves it untouched
+  // rather than resetting it (CloudKit updates only touch the fields provided).
+  const totalRedemptionLimit = Math.max(0, Math.floor(Number(data.totalRedemptionLimit) || 0));
+  const perVisitorRedemptionLimit = Math.max(0, Math.floor(Number(data.perVisitorRedemptionLimit) || 0));
   const fields = {
     name: { value: data.name },
     description: { value: data.description || '' },
@@ -43,6 +50,8 @@ export async function onRequestPost({ request, env }) {
     kind: { value: kind },
     isActive: { value: data.isActive === false ? 0 : 1 },
     sortOrder: { value: Math.floor(Number(data.sortOrder) || 0) },
+    totalRedemptionLimit: { value: totalRedemptionLimit },
+    perVisitorRedemptionLimit: { value: perVisitorRedemptionLimit },
   };
   if (!itemId) fields.venueReference = { value: { recordName: authoritativeVenueId, action: 'NONE' } };
 
