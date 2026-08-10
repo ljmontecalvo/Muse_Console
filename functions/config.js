@@ -53,11 +53,14 @@
 //     directly); writes only via functions/api/giftshop/items/*.js. Queryable index on
 //     venueReference.
 //   - VisitorItemRedemptionCount: itemReference (Reference -> GiftShopItem, action
-//     None), visitorReference (Reference -> Visitor, action None), count (Int64). S2S
-//     only, same posture as VisitorTrophyBalance. recordName convention:
-//     `itemcount_<itemId>_<visitorId>` — deterministic, so it's always fetched
-//     directly (functions/_shared/redemptionLimits.js) rather than queried, and needs
-//     no Queryable index at all.
+//     None), visitorReference (Reference -> Visitor, action None), count (Int64).
+//     Security Roles -> World: no access, Authenticated: no access — S2S only, same
+//     posture as Visitor/VisitorTrophyBalance. Never read by either client: iOS never
+//     touches it (only functions/_shared/redemptionLimits.js does, server-side), and
+//     the console's "X/Y redeemed" display reads GiftShopItem.totalRedeemedCount
+//     instead. recordName convention: `itemcount_<itemId>_<visitorId>` — deterministic,
+//     so it's always fetched directly rather than queried, and needs no Queryable
+//     index at all.
 //   - Visitor: appleUserID (String), displayName (String, optional), email (String,
 //     optional). Security Roles -> World: no access, Authenticated: no access — S2S
 //     only, same posture as ClueTag/HuntEvent. recordName convention:
