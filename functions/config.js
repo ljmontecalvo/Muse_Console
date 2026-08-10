@@ -23,11 +23,23 @@
 // Trophy / gift-shop commerce feature needs the following, all added by hand in
 // Dashboard (Development):
 //
+// !! CONFIRMED MISSING as of 2026-08-06 — Hunt.trophies was never actually added to
+// !! the schema. CloudKit silently drops unrecognized fields on write instead of
+// !! erroring, which is why saving a hunt looked successful (title/description/folder
+// !! all persisted fine) while trophies quietly never got stored at all. Go add it by
+// !! hand — Schema -> Record Types -> Hunt -> New Field -> `trophies`, type Int(64) —
+// !! before trusting that field works. Hunt.difficulty (added alongside it below) is
+// !! brand new and needs the exact same by-hand step, or it'll silently fail the same
+// !! way.
+//
 // New fields on existing types:
 //   - Venue.giftShopEnabled (Int64, 0/1) — same read posture as Venue's other fields;
 //     write only via functions/api/venues/set-giftshop-enabled.js.
 //   - Hunt.trophies (Int64, default 0) — same read posture as Hunt's other fields;
 //     write only via functions/api/hunts/save.js.
+//   - Hunt.difficulty (String: "easy" | "regular" | "challenging", default "regular")
+//     — mirrors the iOS app's HuntDifficulty enum (Models/Hunt.swift) exactly; same
+//     read posture as Hunt's other fields, write only via functions/api/hunts/save.js.
 //
 // New record types:
 //   - GiftShopItem: venueReference (Reference -> Venue, action None), name (String),

@@ -24,9 +24,9 @@ const MockStore = (() => {
     { id: 'venue_3', name: 'Harbor Maritime Museum', address: '88 Wharf Rd, Bayport', managers: ['someone_else'], giftShopEnabled: false },
   ];
   let hunts = [
-    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History', trophies: 20 },
-    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History', trophies: 15 },
-    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '', trophies: 0 },
+    { id: 'hunt_1', venueId: 'venue_1', title: 'Dinosaur Trail', description: 'Explore the Mesozoic wing and uncover ancient secrets hiding in every hall.', folder: 'Natural History', trophies: 20, difficulty: 'easy' },
+    { id: 'hunt_2', venueId: 'venue_1', title: 'Gems & Minerals Quest', description: 'A sparkling journey through the earth sciences hall.', folder: 'Natural History', trophies: 15, difficulty: 'regular' },
+    { id: 'hunt_3', venueId: 'venue_2', title: 'Invention Lab Challenge', description: 'Discover the machines and ideas that changed the world.', folder: '', trophies: 0, difficulty: 'challenging' },
   ];
   let giftShopItemsSeed = [
     { id: 'item_1', venueId: 'venue_1', name: 'Dinosaur Plush Toy', description: 'A soft, huggable T. rex.', trophyCost: 20, kind: 'item', isActive: true, sortOrder: 0 },
@@ -322,6 +322,7 @@ function recordToHunt(r) {
     description: r.fields.description && r.fields.description.value,
     folder: (r.fields.folder && r.fields.folder.value) || '',
     trophies: (r.fields.trophies && r.fields.trophies.value) || 0,
+    difficulty: (r.fields.difficulty && r.fields.difficulty.value) || 'regular',
     venueId: r.fields.venueReference && r.fields.venueReference.value && r.fields.venueReference.value.recordName,
   };
 }
@@ -2386,11 +2387,11 @@ async function openEditor(huntId, venueId) {
       document.getElementById('clue-list').querySelector('#retry-btn').addEventListener('click', () => openEditor(huntId, venueId));
       return;
     }
-    state.draft = { title: h.title, description: h.description, folder: h.folder || '', trophies: h.trophies || 0, clues: clueList.map(c => ({ ...c })) };
+    state.draft = { title: h.title, description: h.description, folder: h.folder || '', trophies: h.trophies || 0, difficulty: h.difficulty || 'regular', clues: clueList.map(c => ({ ...c })) };
     state.originalClueIds = new Set(clueList.map(c => c.id));
     state.huntChangeTag = h.recordChangeTag;
   } else {
-    state.draft = { title: '', description: '', folder: '', trophies: 0, clues: [] };
+    state.draft = { title: '', description: '', folder: '', trophies: 0, difficulty: 'regular', clues: [] };
     state.originalClueIds = new Set();
     state.huntChangeTag = null;
   }
@@ -2407,6 +2408,20 @@ async function openEditor(huntId, venueId) {
   descInput.oninput = (e) => { state.draft.description = e.target.value; };
   trophiesInput.oninput = (e) => { state.draft.trophies = Math.max(0, Math.floor(Number(e.target.value) || 0)); };
   renderHuntFolderField();
+
+  const difficultyControl = document.getElementById('hunt-difficulty-control');
+  const syncDifficultyButtons = () => {
+    difficultyControl.querySelectorAll('button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.value === state.draft.difficulty);
+    });
+  };
+  syncDifficultyButtons();
+  difficultyControl.querySelectorAll('button').forEach((btn) => {
+    btn.onclick = () => {
+      state.draft.difficulty = btn.dataset.value;
+      syncDifficultyButtons();
+    };
+  });
 
   const addBtn = document.getElementById('btn-add-clue');
   addBtn.innerHTML = `${icon('plusCircle')} Add Clue`;
@@ -2777,7 +2792,7 @@ async function saveHunt() {
     await Store.saveHunt(
       state.huntId,
       state.venueId,
-      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim(), trophies: state.draft.trophies || 0 },
+      { title, description: state.draft.description.trim(), folder: state.draft.folder.trim(), trophies: state.draft.trophies || 0, difficulty: state.draft.difficulty || 'regular' },
       state.draft.clues,
       state.originalClueIds,
       state.huntChangeTag

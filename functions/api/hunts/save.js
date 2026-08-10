@@ -11,6 +11,11 @@ function clueTagRecordName(clueRecordName) {
   return 'cluetag_' + clueRecordName;
 }
 
+// Mirrors the iOS app's HuntDifficulty enum (Models/Hunt.swift) exactly — same three
+// values, same "regular" fallback — so a value written here always round-trips cleanly
+// through the app's `HuntDifficulty(rawValue:) ?? .regular` parsing.
+const VALID_DIFFICULTIES = new Set(['easy', 'regular', 'challenging']);
+
 export async function onRequestPost({ request, env }) {
   let payload;
   try {
@@ -53,6 +58,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const trophies = Math.max(0, Math.floor(Number(data.trophies) || 0));
+  const difficulty = VALID_DIFFICULTIES.has(data.difficulty) ? data.difficulty : 'regular';
 
   const huntOp = huntId
     ? {
@@ -66,6 +72,7 @@ export async function onRequestPost({ request, env }) {
             description: { value: data.description },
             folder: { value: data.folder || '' },
             trophies: { value: trophies },
+            difficulty: { value: difficulty },
           },
         },
       }
@@ -78,6 +85,7 @@ export async function onRequestPost({ request, env }) {
             description: { value: data.description },
             folder: { value: data.folder || '' },
             trophies: { value: trophies },
+            difficulty: { value: difficulty },
             venueReference: { value: { recordName: authoritativeVenueId, action: 'NONE' } },
           },
         },
