@@ -931,6 +931,17 @@ textarea.hunt-desc { min-height: 64px; }
 
 #giftshop-body { display: flex; flex-direction: column; gap: 16px; }
 
+/* Large venue switcher at the top of the page — only rendered when the signed-in
+   manager/admin has more than one gift-shop-enabled venue (renderGiftShopView). Sized
+   up from the standard .folder-select since everything else on the page depends on it. */
+.giftshop-venue-switcher .label { margin-bottom: 8px; }
+.giftshop-venue-switcher-select {
+  font-size: 20px;
+  font-weight: 700;
+  padding: 16px 46px 16px 18px;
+  background-size: 16px;
+}
+
 .giftshop-redeem-hint { font-size: 13px; color: var(--text-tertiary); margin: -6px 0 12px; }
 .giftshop-redeem-row { display: flex; gap: 10px; }
 #giftshop-code-input {

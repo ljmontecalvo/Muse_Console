@@ -1741,19 +1741,32 @@ async function renderGiftShopView() {
     return;
   }
 
-  const venueFilterEl = document.getElementById('giftshop-venue-filter');
   if (venues.length > 1) {
     if (!venues.some(v => v.id === state.giftShopVenueFilter)) state.giftShopVenueFilter = venues[0].id;
-    venueFilterEl.style.display = '';
-    venueFilterEl.innerHTML = venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.giftShopVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('');
-    venueFilterEl.onchange = () => {
-      state.giftShopVenueFilter = venueFilterEl.value;
-      renderGiftShopView();
-    };
   } else {
-    venueFilterEl.style.display = 'none';
     state.giftShopVenueFilter = venues[0] ? venues[0].id : '';
   }
+
+  // Large, prominent switcher at the top of the page — only for managers/admins with
+  // more than one gift-shop-enabled venue to choose from (mirrors the small header
+  // select used on Statistics, but sized up since here it drives everything on the
+  // page, not just a chart).
+  const venueSwitcherHTML = venues.length > 1 ? `
+    <div class="panel glass giftshop-venue-switcher">
+      <label class="label" for="giftshop-venue-filter">Venue</label>
+      <select class="folder-select giftshop-venue-switcher-select" id="giftshop-venue-filter">
+        ${venues.map(v => `<option value="${escapeAttr(v.id)}" ${state.giftShopVenueFilter === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('')}
+      </select>
+    </div>
+  ` : '';
+  const wireVenueSwitcher = () => {
+    const el = document.getElementById('giftshop-venue-filter');
+    if (!el) return;
+    el.onchange = () => {
+      state.giftShopVenueFilter = el.value;
+      renderGiftShopView();
+    };
+  };
 
   if (venues.length === 0) {
     bodyEl.innerHTML = '';
@@ -1771,14 +1784,15 @@ async function renderGiftShopView() {
   try {
     items = await Store.giftShopItems(venueId);
   } catch (err) {
-    bodyEl.innerHTML = errorHTML('Could not load the gift shop', err);
+    bodyEl.innerHTML = venueSwitcherHTML + errorHTML('Could not load the gift shop', err);
     bodyEl.querySelector('#retry-btn').addEventListener('click', renderGiftShopView);
+    wireVenueSwitcher();
     return;
   }
 
   giftShopDataCache = { venueId, items };
 
-  bodyEl.innerHTML = `
+  bodyEl.innerHTML = venueSwitcherHTML + `
     <div class="panel glass">
       <p class="panel-title">Redeem a Code</p>
       <p class="giftshop-redeem-hint">Ask the visitor for the 5-letter code on their screen.</p>
@@ -1799,6 +1813,7 @@ async function renderGiftShopView() {
     </div>
   `;
 
+  wireVenueSwitcher();
   wireGiftShopRedeemPanel(venueId);
 
   document.getElementById('btn-add-giftshop-item').addEventListener('click', () => showGiftShopItemForm(venueId, null));
