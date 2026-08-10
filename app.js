@@ -198,6 +198,19 @@ const MockStore = (() => {
         list.push(trimmed);
       }
     },
+    async deleteFolder(venueId, name) {
+      const trimmed = (name || '').trim();
+      const list = folderRegistry[venueId];
+      if (list) folderRegistry[venueId] = list.filter(f => f.toLowerCase() !== trimmed.toLowerCase());
+      let movedCount = 0;
+      hunts.forEach((h) => {
+        if (h.venueId === venueId && (h.folder || '').trim().toLowerCase() === trimmed.toLowerCase()) {
+          h.folder = '';
+          movedCount++;
+        }
+      });
+      return { movedCount };
+    },
     async setHuntFolder(huntId, recordChangeTag, folder) {
       const h = hunts.find(x => x.id === huntId);
       if (h) h.folder = folder || '';
@@ -561,6 +574,16 @@ const CloudKitStore = {
       callerUserRecordName: CURRENT_MANAGER.userRecordName,
       venueId, name: trimmed,
     });
+  },
+
+  async deleteFolder(venueId, name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return { movedCount: 0 };
+    const resp = await apiPost('/api/folders/delete', {
+      callerUserRecordName: CURRENT_MANAGER.userRecordName,
+      venueId, name: trimmed,
+    });
+    return { movedCount: resp.movedCount || 0 };
   },
 
   async setHuntFolder(huntId, recordChangeTag, folder) {
@@ -1236,6 +1259,7 @@ async function renderHuntsHomeList() {
   }).join('');
 
   wireFolderCreationRow(listEl, renderHuntsHomeList);
+  wireFolderDeleteButtons(listEl, huntsHomeCache, renderHuntsHomeList);
 
   listEl.querySelectorAll('.venue-add-folder').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1267,6 +1291,54 @@ async function renderHuntsHomeList() {
       const hunt = huntsHomeCache.find(h => h.id === huntId);
       if (hunt) openMoveFolderPicker(actionsEl, hunt, renderHuntsHomeList);
     });
+  });
+}
+
+// Shared by the All Hunts screen and the per-venue Hunts screen — wires the trash
+// button venueFolderSectionHTML renders on every real folder (never on
+// Uncategorized, which isn't a real FolderRegistry entry). `huntsForCount` is
+// whatever list of hunts the caller already has in scope, used only to size the
+// confirmation message.
+function wireFolderDeleteButtons(listEl, huntsForCount, onDone) {
+  listEl.querySelectorAll('.folder-delete-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const venueId = btn.dataset.deleteFolderVenue;
+      const name = btn.dataset.deleteFolder;
+      const count = huntsForCount.filter(h =>
+        h.venueId === venueId && (h.folder || '').trim().toLowerCase() === name.toLowerCase()
+      ).length;
+      confirmDeleteFolder(venueId, name, count, onDone);
+    });
+  });
+}
+
+function confirmDeleteFolder(venueId, name, huntCount, onDone) {
+  showAlert({
+    icon: 'trash', tone: 'danger', title: 'Delete This Folder?',
+    message: huntCount > 0
+      ? `“${name}” will be removed. ${huntCount} hunt${huntCount === 1 ? '' : 's'} in it will move to Uncategorized — they won't be deleted.`
+      : `“${name}” will be removed.`,
+    actions: [
+      { label: 'Cancel', style: 'btn-glass', onClick: closeOverlay },
+      {
+        label: 'Delete', style: 'btn-prominent danger-fill',
+        onClick: async () => {
+          closeOverlay();
+          try {
+            await Store.deleteFolder(venueId, name);
+            showToast('trash', 'Folder Deleted');
+            await onDone();
+          } catch (err) {
+            showAlert({
+              icon: 'triangleExclaim', tone: 'danger', title: 'Could Not Delete Folder',
+              message: err.message || 'Something went wrong talking to CloudKit.',
+              actions: [{ label: 'OK', style: 'btn-prominent', onClick: closeOverlay }],
+            });
+          }
+        },
+      },
+    ],
   });
 }
 
@@ -1302,12 +1374,15 @@ function venueFolderSectionHTML(venue, venueHunts, registryFolders, isCreatingHe
     const collapsed = !searching && state.collapsedHuntFolders.has(collapseKey);
     return `
       <div class="folder-group ${collapsed ? 'collapsed' : ''}">
-        <button class="folder-header" type="button" data-collapse-key="${escapeAttr(collapseKey)}">
-          ${icon('folder')}
-          <span class="folder-name">${escapeHTML(displayName)}</span>
-          <span class="folder-count">${hunts.length}</span>
-          <span class="folder-chevron">${icon('chevronDown')}</span>
-        </button>
+        <div class="folder-header-row">
+          <button class="folder-header" type="button" data-collapse-key="${escapeAttr(collapseKey)}">
+            ${icon('folder')}
+            <span class="folder-name">${escapeHTML(displayName)}</span>
+            <span class="folder-count">${hunts.length}</span>
+            <span class="folder-chevron">${icon('chevronDown')}</span>
+          </button>
+          ${!isUncategorized ? `<button class="btn-icon-sm folder-delete-btn" type="button" title="Delete Folder" data-delete-folder-venue="${escapeAttr(venue.id)}" data-delete-folder="${escapeAttr(key)}">${icon('trash')}</button>` : ''}
+        </div>
         <div class="folder-hunts">
           ${hunts.length ? hunts.map(h => rowRenderer(h)).join('') : `<div class="folder-empty-hint">No hunts in this folder yet.</div>`}
         </div>
@@ -2396,6 +2471,7 @@ async function renderHuntsList() {
   listEl.innerHTML = venueFolderSectionHTML({ id: state.venueId }, filtered, registryFolders, isCreatingHere, searching, false, venueHuntRowHTML);
 
   wireFolderCreationRow(listEl, renderHuntsList);
+  wireFolderDeleteButtons(listEl, all, renderHuntsList);
 
   listEl.querySelectorAll('.folder-header').forEach((btn) => {
     btn.addEventListener('click', () => {

@@ -522,9 +522,13 @@ input.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; letter-spac
 .folder-group { margin-bottom: 18px; }
 .folder-group:last-child { margin-bottom: 0; }
 
+.folder-header-row { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; }
+.folder-header-row .folder-header { margin-bottom: 0; }
+.folder-header-row .folder-delete-btn { flex: none; margin-right: 4px; }
+
 .folder-header {
   display: flex; align-items: center; gap: 10px;
-  width: 100%; text-align: left;
+  flex: 1; text-align: left; min-width: 0;
   padding: 8px 6px; margin-bottom: 8px;
   background: transparent; border: none; cursor: pointer;
   color: var(--text-primary);
