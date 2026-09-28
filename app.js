@@ -325,11 +325,19 @@ function clueTagRecordName(clueRecordName) {
 // managers," so the venue-scoping check happens server-side against the S2S key.
 // See functions/api/ and functions/_shared/auth.js.
 async function apiPost(path, body) {
+  const started = performance.now();
   const resp = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (path === '/api/giftshop/redemption/complete') {
+    console.info('Redemption timing', {
+      elapsedMs: Math.round(performance.now() - started),
+      status: resp.status,
+      stages: resp.headers.get('Server-Timing'),
+    });
+  }
   let json;
   try { json = await resp.json(); } catch { json = null; }
   if (!resp.ok || !json || json.ok === false) {

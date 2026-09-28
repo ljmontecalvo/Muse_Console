@@ -14,7 +14,26 @@ import { deductTrophies } from '../../../_shared/trophyLedger.js';
 import { checkRedemptionLimits, recordRedemptionForLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, windowIndexForTime } from '../../../_shared/redemptionCode.js';
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+  const started = performance.now();
+  let previous = started;
+  const timings = [];
+  const mark = (name) => {
+    const now = performance.now();
+    timings.push({ name, ms: Math.round(now - previous) });
+    previous = now;
+  };
+  try {
+    const response = await completeRedemption(context, mark);
+    response.headers?.set('Server-Timing', timings.map(t => `${t.name};dur=${t.ms}`).join(', '));
+    return response;
+  } finally {
+    // Durations only: never log visitor identities, redemption codes or credentials.
+    console.info('redemption-timing', JSON.stringify({ totalMs: Math.round(performance.now() - started), stages: timings }));
+  }
+}
+
+async function completeRedemption({ request, env }, mark) {
   let payload;
   try {
     payload = await request.json();
@@ -34,7 +53,9 @@ export async function onRequestPost({ request, env }) {
   }
   const creds = await getS2SCreds(env);
 
+  mark('credentials');
   const authorized = await authorizeVenueOrAdmin(creds, venueId, callerUserRecordName);
+  mark('authorization');
   if (!authorized) return jsonResponse({ ok: false, error: 'forbidden' }, 403);
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -47,6 +68,7 @@ export async function onRequestPost({ request, env }) {
     ],
   });
 
+  mark('find_pending');
   const currentWindow = windowIndexForTime(nowSec);
   const windowsToCheck = [currentWindow - 1, currentWindow, currentWindow + 1];
 
@@ -65,6 +87,7 @@ export async function onRequestPost({ request, env }) {
     }
   }
 
+  mark('match_code');
   if (matches.length === 0) return jsonResponse({ ok: false, error: 'no_match' }, 404);
   if (matches.length > 1) return jsonResponse({ ok: false, error: 'ambiguous_match' }, 409);
 
@@ -82,6 +105,7 @@ export async function onRequestPost({ request, env }) {
     itemId ? ckFetchRecord({ ...creds, recordName: itemId }) : null,
     visitorId ? ckFetchRecord({ ...creds, recordName: visitorId }).catch(() => null) : null,
   ]);
+  mark('read_records');
   const currentBalance = balanceRecord?.fields.balance?.value || 0;
   if (currentBalance < trophyCost) {
     return jsonResponse({ ok: false, error: 'insufficient_balance', balance: currentBalance, trophyCost }, 400);
@@ -99,12 +123,14 @@ export async function onRequestPost({ request, env }) {
     }
   }
 
+  mark('check_limits');
   const deductResult = await deductTrophies(creds, {
     visitorId, venueId, amount: trophyCost,
     redemptionId: redemption.recordName,
     idempotencyKey: `redeem_${redemption.recordName}`,
     balanceRecord,
   });
+  mark('deduct_balance');
   if (!deductResult.ok) {
     return jsonResponse({ ok: false, error: deductResult.error || 'deduction_failed' }, 400);
   }
@@ -112,6 +138,7 @@ export async function onRequestPost({ request, env }) {
     await recordRedemptionForLimits(creds, itemId, visitorId, item);
   }
 
+  mark('update_counters');
   const updateResp = await ckModifyRecords({
     ...creds,
     operations: [{
@@ -128,6 +155,7 @@ export async function onRequestPost({ request, env }) {
       },
     }],
   });
+  mark('save_completion');
   const failed = (updateResp.records || []).find((r) => r.serverErrorCode);
   if (failed) return jsonResponse({ ok: false, error: 'save_failed', message: failed.reason || failed.serverErrorCode }, 500);
 
