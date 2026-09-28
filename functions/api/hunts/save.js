@@ -93,7 +93,7 @@ export async function onRequestPost({ request, env }) {
 
   const huntResp = await ckModifyRecords({ ...creds, operations: [huntOp] });
   const savedHunt = huntResp.records && huntResp.records[0];
-  if (!savedHunt || savedHunt.serverErrorCode || savedHunt.recordName === undefined) {
+  if (!savedHunt || savedHunt.recordName === undefined) {
     return jsonResponse({ ok: false, error: 'save_failed', message: (huntResp.records && huntResp.records[0] && huntResp.records[0].reason) || 'Could not save hunt' }, 500);
   }
   const finalHuntId = savedHunt.recordName;

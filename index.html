@@ -4,8 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Muse Console</title>
-<script src="theme-init.js"></script>
-<link rel="stylesheet" href="styles.css?v=20260920" />
+<script>
+
+  (function () {
+    var t = localStorage.getItem('museTheme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="stylesheet" href="styles.css?v=20260810d" />
 </head>
 <body>
 <div id="app">
@@ -233,8 +239,8 @@
 <div class="toast glass-strong" id="toast"></div>
 
 <script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
-<script src="config.js?v=20260920"></script>
-<script src="icons.js?v=20260920"></script>
-<script src="app.js?v=20260920"></script>
+<script src="config.js?v=20260810d"></script>
+<script src="icons.js?v=20260810d"></script>
+<script src="app.js?v=20260810d"></script>
 </body>
 </html>

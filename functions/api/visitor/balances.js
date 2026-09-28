@@ -1,4 +1,3 @@
-import { commerceDB, ensureBalance } from '../../_shared/trophyLedger.js';
 // Returns the signed-in visitor's trophy balance at every venue they've earned
 // trophies at, joined with venue names — feeds the iOS app's Venues screen.
 
@@ -21,20 +20,15 @@ export async function onRequestPost({ request, env }) {
     filterBy: [{ fieldName: 'visitorReference', comparator: 'EQUALS', fieldValue: { value: { recordName: visitorId } } }],
   });
 
-  const db = commerceDB(env);
-  for (const rec of balanceRecords) {
-    const venueId = rec.fields.venueReference?.value?.recordName;
-    if (venueId) await ensureBalance(db, creds, visitorId, venueId);
-  }
-  const { results: rows } = await db.prepare('SELECT venue_id,balance FROM balances WHERE visitor_id=?').bind(visitorId).all();
-  const balances = await Promise.all(rows.map(async (rec) => {
-    const venueId = rec.venue_id;
+  const balances = await Promise.all(balanceRecords.map(async (rec) => {
+    const venueRef = rec.fields.venueReference && rec.fields.venueReference.value;
+    const venueId = venueRef && venueRef.recordName;
     const venue = venueId ? await ckFetchRecord({ ...creds, recordName: venueId }) : null;
     return {
       venueId,
       venueName: (venue && venue.fields.name && venue.fields.name.value) || 'Unknown Venue',
       giftShopEnabled: !!(venue && venue.fields.giftShopEnabled && venue.fields.giftShopEnabled.value === 1),
-      balance: rec.balance,
+      balance: (rec.fields.balance && rec.fields.balance.value) || 0,
     };
   }));
 

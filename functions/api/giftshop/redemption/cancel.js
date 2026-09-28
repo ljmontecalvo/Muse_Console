@@ -1,17 +1,52 @@
-import { jsonResponse } from '../../../_shared/cloudkit.js';
+// Visitor-initiated cancel of a pending redemption. No balance change — nothing was
+// debited at redemption/start, only pre-flight checked, so cancelling costs nothing.
+
+import { ckFetchRecord, ckModifyRecords, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { requireVisitorSession } from '../../../_shared/visitorSession.js';
-import { commerceDB } from '../../../_shared/trophyLedger.js';
+
 export async function onRequestPost({ request, env }) {
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ ok: false, error: 'bad_request' }, 400);
+  }
+
+  const { redemptionId } = payload || {};
+  if (!redemptionId) return jsonResponse({ ok: false, error: 'bad_request' }, 400);
+
+  if (!env.CLOUDKIT_S2S_PRIVATE_KEY_PKCS8_B64 || !env.CLOUDKIT_S2S_KEY_ID) {
+    console.error('giftshop/redemption/cancel: missing S2S env vars');
+    return jsonResponse({ ok: false, error: 'server_misconfigured' }, 500);
+  }
+
   const visitorId = await requireVisitorSession(request, env);
   if (!visitorId) return jsonResponse({ ok: false, error: 'unauthorized' }, 401);
-  const { redemptionId } = await request.json();
-  if (typeof redemptionId !== 'string') return jsonResponse({ ok: false, error: 'bad_request' }, 400);
-  const db = commerceDB(env);
-  let row = await db.prepare('SELECT * FROM redemptions WHERE id=? AND visitor_id=?').bind(redemptionId, visitorId).first();
-  if (!row) return jsonResponse({ ok: false, error: 'not_found' }, 404);
-  await db.prepare("UPDATE redemptions SET status='cancelled' WHERE id=? AND visitor_id=? AND status='pending'").bind(redemptionId, visitorId).run();
-  row = await db.prepare('SELECT * FROM redemptions WHERE id=?').bind(redemptionId).first();
-  if (row.status !== 'cancelled') return jsonResponse({ ok: false, error: 'not_pending' }, 409);
-  const status = row.status === 'pending' && row.expires_at <= Date.now() / 1000 ? 'expired' : row.status;
-  return jsonResponse({ ok: true, status });
+
+  const creds = await getS2SCreds(env);
+  const redemption = await ckFetchRecord({ ...creds, recordName: redemptionId });
+  if (!redemption) return jsonResponse({ ok: false, error: 'not_found' }, 404);
+
+  const owner = redemption.fields.visitorReference && redemption.fields.visitorReference.value;
+  if (!owner || owner.recordName !== visitorId) return jsonResponse({ ok: false, error: 'forbidden' }, 403);
+
+  const status = redemption.fields.status && redemption.fields.status.value;
+  if (status !== 'pending') return jsonResponse({ ok: false, error: 'not_pending' }, 400);
+
+  const resp = await ckModifyRecords({
+    ...creds,
+    operations: [{
+      operationType: 'update',
+      record: {
+        recordName: redemptionId,
+        recordChangeTag: redemption.recordChangeTag,
+        recordType: 'Redemption',
+        fields: { status: { value: 'cancelled' } },
+      },
+    }],
+  });
+  const failed = (resp.records || []).find((r) => r.serverErrorCode);
+  if (failed) return jsonResponse({ ok: false, error: 'save_failed', message: failed.reason || failed.serverErrorCode }, 500);
+
+  return jsonResponse({ ok: true });
 }

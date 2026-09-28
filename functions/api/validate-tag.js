@@ -1,4 +1,3 @@
-import { signToken, verifyToken } from '../_shared/signedToken.js';
 // Validates a scanned NFC tag ID against CloudKit's ClueTag record type (never exposed
 // to World/Authenticated — only this function's Server-to-Server key can read it) and
 // checks the caller-reported GPS location against the clue's venue before confirming a
@@ -27,11 +26,9 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
 
-  const { nfcTagID, latitude, longitude, horizontalAccuracy, progressToken } = payload || {};
+  const { nfcTagID, latitude, longitude, horizontalAccuracy } = payload || {};
   if (!nfcTagID || typeof nfcTagID !== 'string' ||
-      !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
-      !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
-      !Number.isFinite(horizontalAccuracy) || horizontalAccuracy < 0) {
+      typeof latitude !== 'number' || typeof longitude !== 'number') {
     return jsonResponse({ ok: false, error: 'bad_request' }, 400);
   }
 
@@ -40,10 +37,6 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'server_misconfigured' }, 500);
   }
 
-  const progress = await verifyToken(progressToken, 'hunt-progress', env.HUNT_PROGRESS_SECRET);
-  if (!progress || !Array.isArray(progress.clueIds) || !Number.isInteger(progress.next) || progress.next >= progress.clueIds.length) {
-    return jsonResponse({ ok: false, error: 'invalid_progress' }, 409);
-  }
   const creds = await getS2SCreds(env);
 
   const matches = await ckQuery({
@@ -61,7 +54,6 @@ export async function onRequestPost({ request, env }) {
 
   const clueRecordName = match.fields.clueReference && match.fields.clueReference.value &&
     match.fields.clueReference.value.recordName;
-  if (clueRecordName !== progress.clueIds[progress.next]) return jsonResponse({ ok: false, error: 'wrong_clue' }, 404);
   const clue = clueRecordName && await ckFetchRecord({ ...creds, recordName: clueRecordName });
   const huntRecordName = clue && clue.fields.huntReference && clue.fields.huntReference.value &&
     clue.fields.huntReference.value.recordName;
@@ -75,9 +67,6 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'data_integrity' }, 500);
   }
 
-  if (huntRecordName !== progress.huntId || venueRecordName !== progress.venueId) {
-    return jsonResponse({ ok: false, error: 'hunt_changed' }, 409);
-  }
   const venueLoc = venue.fields.location.value;
   const distance = haversineMeters(latitude, longitude, venueLoc.latitude, venueLoc.longitude);
   const allowedRadius = BASE_RADIUS_METERS + Math.min(Math.max(Number(horizontalAccuracy) || 0, 0), ACCURACY_CAP_METERS);
@@ -86,7 +75,5 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'too_far', distanceMeters: Math.round(distance) }, 403);
   }
 
-  const nextToken = await signToken({ ...progress, next: progress.next + 1 }, 'hunt-progress', env.HUNT_PROGRESS_SECRET,
-    Math.max(1, progress.exp - Math.floor(Date.now() / 1000)));
-  return jsonResponse({ ok: true, clueId: clueRecordName, progressToken: nextToken });
+  return jsonResponse({ ok: true, clueId: clueRecordName });
 }

@@ -1,51 +1,146 @@
-// The D1 status update, debit, and both counters are one transaction (SQL triggers).
-// Repeating a completed code returns its receipt without rechecking/debiting the balance.
-import { ckFetchRecord, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
+// Console-side: staff types the visitor's rotating code at checkout. Searches pending,
+// unexpired Redemptions scoped to the venue the caller is authorized for, recomputes
+// each candidate's code across a +-15s window (covering read/type delay), matches,
+// re-verifies the visitor still has enough balance, deducts, and marks it completed.
+//
+// Authorization here intentionally stays on the same callerUserRecordName trust model
+// as every other console write (see functions/_shared/auth.js) rather than the
+// verified-session model used for visitor endpoints — a deliberate, documented choice
+// (see the plan's "residual trust gap" note), not an oversight.
+
+import { ckFetchRecord, ckModifyRecords, ckQuery, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { authorizeVenueOrAdmin } from '../../../_shared/auth.js';
-import { commerceDB, ensureBalance, nonnegativeInteger } from '../../../_shared/trophyLedger.js';
-import { ensureItemCounts } from '../../../_shared/redemptionLimits.js';
+import { deductTrophies } from '../../../_shared/trophyLedger.js';
+import { checkRedemptionLimits, recordRedemptionForLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, windowIndexForTime } from '../../../_shared/redemptionCode.js';
 
 export async function onRequestPost({ request, env }) {
-  const { callerUserRecordName, venueId, code } = await request.json();
-  if (typeof code !== 'string' || !/^[A-Z]{5}$/.test(code.trim().toUpperCase()) || !venueId) return jsonResponse({ ok: false, error: 'bad_request' }, 400);
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ ok: false, error: 'bad_request' }, 400);
+  }
+
+  const { callerUserRecordName, venueId, code } = payload || {};
+  const normalizedCode = (code || '').trim().toUpperCase();
+  if (!callerUserRecordName || !venueId || !normalizedCode) {
+    return jsonResponse({ ok: false, error: 'bad_request' }, 400);
+  }
+
+  if (!env.CLOUDKIT_S2S_PRIVATE_KEY_PKCS8_B64 || !env.CLOUDKIT_S2S_KEY_ID) {
+    console.error('giftshop/redemption/complete: missing S2S env vars');
+    return jsonResponse({ ok: false, error: 'server_misconfigured' }, 500);
+  }
   const creds = await getS2SCreds(env);
-  if (!await authorizeVenueOrAdmin(creds, venueId, callerUserRecordName)) return jsonResponse({ ok: false, error: 'forbidden' }, 403);
-  const db = commerceDB(env);
-  const now = Math.floor(Date.now() / 1000);
-  const { results: candidates } = await db.prepare("SELECT * FROM redemptions WHERE venue_id=? AND expires_at>? AND status IN ('pending','completed')").bind(venueId, now).all();
-  const current = windowIndexForTime(now);
+
+  const authorized = await authorizeVenueOrAdmin(creds, venueId, callerUserRecordName);
+  if (!authorized) return jsonResponse({ ok: false, error: 'forbidden' }, 403);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const candidates = await ckQuery({
+    ...creds,
+    recordType: 'Redemption',
+    filterBy: [
+      { fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: { recordName: venueId } } },
+      { fieldName: 'status', comparator: 'EQUALS', fieldValue: { value: 'pending' } },
+    ],
+  });
+
+  const currentWindow = windowIndexForTime(nowSec);
+  const windowsToCheck = [currentWindow - 1, currentWindow, currentWindow + 1];
+
   const matches = [];
   for (const candidate of candidates) {
-    for (const w of [current - 1, current, current + 1]) {
-      if (await deriveCode(candidate.code_secret, w) === code.trim().toUpperCase()) { matches.push(candidate); break; }
+    const expiresAt = candidate.fields.expiresAt && candidate.fields.expiresAt.value;
+    if (!expiresAt || expiresAt < nowSec) continue;
+    const codeSecret = candidate.fields.codeSecret && candidate.fields.codeSecret.value;
+    if (!codeSecret) continue;
+    for (const w of windowsToCheck) {
+      const candidateCode = await deriveCode(codeSecret, w);
+      if (candidateCode === normalizedCode) {
+        matches.push(candidate);
+        break;
+      }
     }
   }
-  if (!matches.length) return jsonResponse({ ok: false, error: 'no_match' }, 404);
-  if (matches.length !== 1) return jsonResponse({ ok: false, error: 'ambiguous_match' }, 409);
-  let redemption = matches[0];
-  if (redemption.status === 'pending') {
-    const item = await ckFetchRecord({ ...creds, recordName: redemption.item_id });
-    const venue = await ckFetchRecord({ ...creds, recordName: venueId });
-    if (!item || item.fields.isActive?.value !== 1) return jsonResponse({ ok: false, error: 'item_unavailable' }, 400);
-    if (venue?.fields.giftShopEnabled?.value !== 1) return jsonResponse({ ok: false, error: 'giftshop_disabled' }, 400);
-    await ensureBalance(db, creds, redemption.visitor_id, venueId);
-    await ensureItemCounts(db, creds, item, redemption.visitor_id);
-    try {
-      await db.prepare("UPDATE redemptions SET status='completed',completed_at=?,staff_id=?,total_limit=?,visitor_limit=? WHERE id=? AND status='pending'")
-        .bind(now, callerUserRecordName, nonnegativeInteger(item.fields.totalRedemptionLimit?.value),
-          nonnegativeInteger(item.fields.perVisitorRedemptionLimit?.value), redemption.id).run();
-    } catch (error) {
-      const code = ['insufficient_balance','item_limit_reached','visitor_limit_reached','expired'].find(c => error.message.includes(c));
-      if (code) return jsonResponse({ ok: false, error: code }, 409);
-      throw error;
-    }
-    redemption = await db.prepare('SELECT * FROM redemptions WHERE id=?').bind(redemption.id).first();
-    if (redemption.status !== 'completed') return jsonResponse({ ok: false, error: 'not_pending' }, 409);
+
+  if (matches.length === 0) return jsonResponse({ ok: false, error: 'no_match' }, 404);
+  if (matches.length > 1) return jsonResponse({ ok: false, error: 'ambiguous_match' }, 409);
+
+  const redemption = matches[0];
+  const visitorRef = redemption.fields.visitorReference && redemption.fields.visitorReference.value;
+  const visitorId = visitorRef && visitorRef.recordName;
+  const itemRef = redemption.fields.itemReference && redemption.fields.itemReference.value;
+  const itemId = itemRef && itemRef.recordName;
+  const trophyCost = (redemption.fields.itemTrophyCostSnapshot && redemption.fields.itemTrophyCostSnapshot.value) || 0;
+
+  // These reads are independent. Keep the balance record/change tag for the
+  // debit so we do not immediately fetch the same record again.
+  const [balanceRecord, item, visitor] = await Promise.all([
+    ckFetchRecord({ ...creds, recordName: `balance_${visitorId}_${venueId}` }),
+    itemId ? ckFetchRecord({ ...creds, recordName: itemId }) : null,
+    visitorId ? ckFetchRecord({ ...creds, recordName: visitorId }).catch(() => null) : null,
+  ]);
+  const currentBalance = balanceRecord?.fields.balance?.value || 0;
+  if (currentBalance < trophyCost) {
+    return jsonResponse({ ok: false, error: 'insufficient_balance', balance: currentBalance, trophyCost }, 400);
   }
-  // Optional display information must not turn a committed redemption into a failed request.
-  let visitor;
-  try { visitor = await ckFetchRecord({ ...creds, recordName: redemption.visitor_id }); } catch { /* Receipt remains valid. */ }
-  return jsonResponse({ ok: true, item: { name: redemption.item_name, kind: redemption.item_kind, trophyCost: redemption.cost },
-    visitorDisplayName: visitor?.fields.displayName?.value || '', remainingBalance: redemption.remaining_balance });
+
+  // Re-check right before completing — the pre-flight check at redemption/start was a
+  // soft check with nothing reserved, so another visitor's redemption could have
+  // consumed the last slot in the meantime.
+  if (itemId) {
+    if (item) {
+      const limitCheck = await checkRedemptionLimits(creds, item, visitorId);
+      if (!limitCheck.ok) {
+        return jsonResponse({ ok: false, error: limitCheck.error }, 400);
+      }
+    }
+  }
+
+  const deductResult = await deductTrophies(creds, {
+    visitorId, venueId, amount: trophyCost,
+    redemptionId: redemption.recordName,
+    idempotencyKey: `redeem_${redemption.recordName}`,
+    balanceRecord,
+  });
+  if (!deductResult.ok) {
+    return jsonResponse({ ok: false, error: deductResult.error || 'deduction_failed' }, 400);
+  }
+  if (itemId) {
+    await recordRedemptionForLimits(creds, itemId, visitorId, item);
+  }
+
+  const updateResp = await ckModifyRecords({
+    ...creds,
+    operations: [{
+      operationType: 'update',
+      record: {
+        recordName: redemption.recordName,
+        recordChangeTag: redemption.recordChangeTag,
+        recordType: 'Redemption',
+        fields: {
+          status: { value: 'completed' },
+          completedAt: { value: nowSec },
+          redeemedByStaffUserRecordName: { value: callerUserRecordName },
+        },
+      },
+    }],
+  });
+  const failed = (updateResp.records || []).find((r) => r.serverErrorCode);
+  if (failed) return jsonResponse({ ok: false, error: 'save_failed', message: failed.reason || failed.serverErrorCode }, 500);
+
+  const visitorDisplayName = (visitor && visitor.fields.displayName && visitor.fields.displayName.value) || '';
+
+  return jsonResponse({
+    ok: true,
+    item: {
+      name: redemption.fields.itemNameSnapshot && redemption.fields.itemNameSnapshot.value,
+      kind: redemption.fields.itemKindSnapshot && redemption.fields.itemKindSnapshot.value,
+      trophyCost,
+    },
+    visitorDisplayName,
+    remainingBalance: deductResult.balance,
+  });
 }

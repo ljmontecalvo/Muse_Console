@@ -142,9 +142,9 @@ const MockStore = (() => {
     async allVenues() {
       return venues.map(v => ({ ...v }));
     },
-    async createVenue(name, address, latitude, longitude) {
+    async createVenue(name, address) {
       const id = nextId('venue');
-      venues.push({ id, name, address, managers: [], location: { latitude, longitude } });
+      venues.push({ id, name, address, managers: [] });
       return id;
     },
     async assignManager(venueId, userRecordName) {
@@ -250,7 +250,6 @@ const MockStore = (() => {
       return { totals, timeSeries, perHunt: [...perHunt].sort((a, b) => b.starts - a.starts) };
     },
 
-    async setVenueLocation(venueId, location) { const venue = venues.find(v => v.id === venueId); if (venue) venue.location = location; },
     async setGiftShopEnabled(venueId, enabled) {
       const v = venues.find(x => x.id === venueId);
       if (v) v.giftShopEnabled = !!enabled;
@@ -325,65 +324,18 @@ function clueTagRecordName(clueRecordName) {
 // straight to CloudKit — CloudKit's role model can't express "only this venue's
 // managers," so the venue-scoping check happens server-side against the S2S key.
 // See functions/api/ and functions/_shared/auth.js.
-let consoleSessionToken = null;
-let consoleSessionPromise = null;
-async function rawPost(path, body, token) {
-  const resp = await fetch(path, { method: 'POST', headers: {
-    'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }, body: JSON.stringify(body) });
+async function apiPost(path, body) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   let json;
   try { json = await resp.json(); } catch { json = null; }
   if (!resp.ok || !json || json.ok === false) {
-    const error = new Error(json?.message || json?.error || `Request failed (${resp.status})`);
-    error.status = resp.status;
-    throw error;
+    throw new Error((json && (json.message || json.error)) || `Request failed (${resp.status})`);
   }
   return json;
-}
-async function establishConsoleSession() {
-  if (consoleSessionPromise) return consoleSessionPromise;
-  consoleSessionPromise = (async () => {
-    const challenge = await rawPost('/api/console/challenge', {});
-    const saved = await publicDB.saveRecords([{ recordName: challenge.recordName, recordType: 'ConsoleAuthProof',
-      fields: { proofHash: { value: challenge.proofHash } } }]);
-    assertNoErrors(saved);
-    const result = await rawPost('/api/console/session', { challenge: challenge.challenge });
-    if (result.userRecordName !== CURRENT_MANAGER.userRecordName) throw new Error('Account changed — please sign in again.');
-    consoleSessionToken = result.sessionToken;
-  })();
-  try { await consoleSessionPromise; } finally { consoleSessionPromise = null; }
-}
-async function apiPost(path, body) {
-  if (!consoleSessionToken) await establishConsoleSession();
-  try { return await rawPost(path, body, consoleSessionToken); }
-  catch (error) {
-    if (error.status !== 401) throw error;
-    consoleSessionToken = null;
-    await establishConsoleSession();
-    return rawPost(path, body, consoleSessionToken);
-  }
-}
-async function queryAll(query) {
-  const records = [];
-  const seen = new Set();
-  let continuationMarker;
-  do {
-    const response = await publicDB.performQuery(query, continuationMarker ? { continuationMarker } : {});
-    assertNoErrors(response);
-    records.push(...response.records);
-    continuationMarker = response.continuationMarker;
-    if (continuationMarker && seen.has(continuationMarker)) throw new Error('Repeated CloudKit cursor');
-    seen.add(continuationMarker);
-  } while (continuationMarker);
-  return { records };
-}
-async function fetchAllRecords(ids) {
-  const records = [];
-  for (let start = 0; start < ids.length; start += 200) {
-    const response = await publicDB.fetchRecords(ids.slice(start, start + 200));
-    records.push(...(response.records || []));
-  }
-  return { records };
 }
 
 function assertNoErrors(response) {
@@ -466,7 +418,7 @@ const CloudKitStore = {
   },
 
   async allUsers() {
-    const response = await queryAll({ recordType: 'AppUser' });
+    const response = await publicDB.performQuery({ recordType: 'AppUser' });
     assertNoErrors(response);
     return response.records.map(r => ({
       userRecordName: r.fields.userRecordName && r.fields.userRecordName.value,
@@ -496,10 +448,10 @@ const CloudKitStore = {
     return resp.venues;
   },
 
-  async createVenue(name, address, latitude, longitude) {
+  async createVenue(name, address) {
     const response = await publicDB.saveRecords([{
       recordType: 'Venue',
-      fields: { name: { value: name }, address: { value: address }, managers: { value: [] }, location: { value: { latitude, longitude }, type: 'LOCATION' } },
+      fields: { name: { value: name }, address: { value: address }, managers: { value: [] } },
     }]);
     assertNoErrors(response);
     return response.records[0].recordName;
@@ -545,7 +497,7 @@ const CloudKitStore = {
   },
 
   async huntsForVenue(venueId) {
-    const response = await queryAll({
+    const response = await publicDB.performQuery({
       recordType: 'Hunt',
       filterBy: [{ fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(venueId) } }],
     });
@@ -560,7 +512,7 @@ const CloudKitStore = {
   },
 
   async cluesForHunt(huntId) {
-    const response = await queryAll({
+    const response = await publicDB.performQuery({
       recordType: 'Clue',
       filterBy: [{ fieldName: 'huntReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(huntId) } }],
       sortBy: [{ fieldName: 'order', ascending: true }],
@@ -572,7 +524,7 @@ const CloudKitStore = {
     // nfcTagID lives on the separate ClueTag type, readable only by managers in the
     // Museum Managers CloudKit role (see CLOUDKIT_SETUP.md) — not World/Authenticated.
     // A manager without that role gets tagsByClueId misses here, not a hard failure.
-    const tagResp = await fetchAllRecords(clues.map(c => clueTagRecordName(c.id)));
+    const tagResp = await publicDB.fetchRecords(clues.map(c => clueTagRecordName(c.id)));
     const tagsByClueId = {};
     (tagResp.records || []).forEach((r) => {
       if (!r || r.serverErrorCode) return;
@@ -655,9 +607,6 @@ const CloudKitStore = {
     return { totals: resp.totals, timeSeries: resp.timeSeries, perHunt: resp.perHunt };
   },
 
-  async setVenueLocation(venueId, location) {
-    await apiPost('/api/venues/set-location', { venueId, ...location });
-  },
   async setGiftShopEnabled(venueId, enabled) {
     await apiPost('/api/venues/set-giftshop-enabled', {
       callerUserRecordName: CURRENT_MANAGER.userRecordName,
@@ -669,13 +618,12 @@ const CloudKitStore = {
   // CloudKit like huntsForVenue does, no backend hop needed. Writes still go through
   // the S2S endpoints below.
   async giftShopItems(venueId) {
-    const response = await queryAll({
+    const response = await publicDB.performQuery({
       recordType: 'GiftShopItem',
       filterBy: [{ fieldName: 'venueReference', comparator: 'EQUALS', fieldValue: { value: ckRefQuery(venueId) } }],
     });
     assertNoErrors(response);
-    const { counts } = await apiPost('/api/giftshop/counts', { venueId });
-    return response.records.map(r => ({ ...recordToGiftShopItem(r), totalRedeemedCount: counts[r.recordName] ?? 0 })).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    return response.records.map(recordToGiftShopItem).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   },
 
   async saveGiftShopItem(venueId, itemId, itemChangeTag, data) {
@@ -957,25 +905,6 @@ async function goToVenues() {
   await renderVenuesGrid();
 }
 
-function coordinateFields(location = {}) {
-  location = location || {};
-  return `<div class="field" style="width:100%;text-align:left;">
-    <label class="label" for="venue-latitude">Latitude</label>
-    <input id="venue-latitude" type="number" min="-90" max="90" step="any" required value="${escapeAttr(String(location.latitude ?? ''))}" placeholder="e.g. 43.1566" />
-    <label class="label" for="venue-longitude">Longitude</label>
-    <input id="venue-longitude" type="number" min="-180" max="180" step="any" required value="${escapeAttr(String(location.longitude ?? ''))}" placeholder="e.g. -77.6088" />
-    <p class="settings-desc">Coordinates let visitors find the venue and verify exhibit scans.</p>
-  </div>`;
-}
-function readCoordinates() {
-  const lat = document.getElementById('venue-latitude').value.trim();
-  const lon = document.getElementById('venue-longitude').value.trim();
-  const latitude = Number(lat), longitude = Number(lon);
-  if (!lat || !lon || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
-    throw new Error('Enter valid latitude and longitude coordinates.');
-  }
-  return { latitude, longitude };
-}
 function showAddVenueForm() {
   const card = document.getElementById('alert-card');
   card.innerHTML = `
@@ -989,7 +918,6 @@ function showAddVenueForm() {
       <label class="label">Address</label>
       <input type="text" id="venue-form-address" placeholder="e.g. 400 Riverside Dr, Springfield" />
     </div>
-    ${coordinateFields()}
     <p class="alert-msg" id="venue-form-error" style="display:none;color:var(--red);"></p>
     <div class="alert-actions">
       <button class="btn btn-glass" type="button" id="venue-form-cancel">Cancel</button>
@@ -1019,8 +947,7 @@ function showAddVenueForm() {
     saveBtn.disabled = true;
     saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Adding…`;
     try {
-      const { latitude, longitude } = readCoordinates();
-      await Store.createVenue(name, address, latitude, longitude);
+      await Store.createVenue(name, address);
       closeOverlay();
       showToast('checkCircle', 'Venue Added');
       await renderVenuesGrid();
@@ -1115,7 +1042,6 @@ function showVenueSettingsForm(venue) {
       </div>
       <button class="toggle-switch ${venue.giftShopEnabled ? 'on' : ''}" id="venue-giftshop-toggle" type="button" role="switch" aria-checked="${!!venue.giftShopEnabled}"></button>
     </div>
-    ${coordinateFields(venue.location)}
     <p class="alert-msg" id="venue-settings-error" style="display:none;color:var(--red);"></p>
     <div class="alert-actions">
       <button class="btn btn-glass" type="button" id="venue-settings-cancel">Cancel</button>
@@ -1140,8 +1066,6 @@ function showVenueSettingsForm(venue) {
     saveBtn.disabled = true;
     saveBtn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Saving…`;
     try {
-      const location = readCoordinates();
-      await Store.setVenueLocation(venue.id, location);
       await Store.setGiftShopEnabled(venue.id, enabled);
       closeOverlay();
       showToast('checkCircle', 'Venue Updated');
@@ -1987,10 +1911,6 @@ const REDEMPTION_ERROR_MESSAGES = {
   item_limit_reached: 'This item has reached its total redemption limit and is sold out.',
   visitor_limit_reached: 'This visitor has already redeemed the maximum allowed of this item.',
   forbidden: "You're not authorized to redeem codes for this venue.",
-  not_pending: 'This redemption was already cancelled. Ask the visitor to start another.',
-  expired: 'This redemption expired. Ask the visitor to start another.',
-  item_unavailable: 'This item is no longer available.',
-  giftshop_disabled: 'This venue no longer has an active gift shop.',
 };
 function redemptionErrorMessage(err) {
   return REDEMPTION_ERROR_MESSAGES[err.message] || err.message || 'Could not redeem that code.';
@@ -2000,9 +1920,6 @@ function wireGiftShopRedeemPanel(venueId) {
   const codeInput = document.getElementById('giftshop-code-input');
   const redeemBtn = document.getElementById('giftshop-redeem-btn');
   const resultEl = document.getElementById('giftshop-redeem-result');
-  resultEl.setAttribute('role', 'status');
-  resultEl.setAttribute('aria-live', 'polite');
-  let submitting = false;
 
   codeInput.addEventListener('input', () => {
     codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 5);
@@ -2013,17 +1930,14 @@ function wireGiftShopRedeemPanel(venueId) {
   codeInput.focus();
 
   const submit = async () => {
-    if (submitting) return;
     const code = codeInput.value.trim();
     if (code.length !== 5) {
       resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} Codes are 5 letters — check with the visitor and try again.</div>`;
       return;
     }
-    submitting = true;
     redeemBtn.disabled = true;
-    redeemBtn.textContent = 'Redeeming…';
     codeInput.disabled = true;
-    resultEl.textContent = 'Processing redemption. Please wait for confirmation.';
+    resultEl.innerHTML = '';
     try {
       const result = await Store.completeRedemption(venueId, code);
       resultEl.innerHTML = `
@@ -2034,12 +1948,9 @@ function wireGiftShopRedeemPanel(venueId) {
         </div>
       `;
       codeInput.value = '';
-      showToast('checkCircle', 'Redemption completed');
     } catch (err) {
       resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} ${escapeHTML(redemptionErrorMessage(err))}</div>`;
     } finally {
-      submitting = false;
-      redeemBtn.textContent = 'Redeem';
       redeemBtn.disabled = false;
       codeInput.disabled = false;
       codeInput.focus();
@@ -3137,10 +3048,7 @@ const demoBanner = document.getElementById('demo-banner');
 
 async function handleSignedIn(identity) {
   Object.assign(CURRENT_MANAGER, identityToManager(identity));
-  try {
-    await establishConsoleSession();
-    await finishSignIn();
-  } catch (error) { showAuthError(error); }
+  await finishSignIn();
 }
 
 async function finishSignIn() {
@@ -3267,7 +3175,6 @@ async function enterAfterSignIn() {
 }
 
 function signOut() {
-  consoleSessionToken = null;
   state.venueId = null;
   state.huntId = null;
   CURRENT_MANAGER.userRecordName = null;

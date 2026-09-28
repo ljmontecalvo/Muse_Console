@@ -1,5 +1,3 @@
-> For the current authentication and transactional rewards update, follow [DEPLOYMENT.md](DEPLOYMENT.md) first. The notes below describe the earlier tag migration and may reflect older schema permissions.
-
 # NFC tag security fix — manual setup
 
 Code changes (this repo + the iOS app) are done. These steps have to be done by hand
