@@ -953,10 +953,15 @@ textarea.hunt-desc { min-height: 64px; }
   font-size: 22px; font-weight: 700; letter-spacing: 0.2em; text-align: center;
   text-transform: uppercase;
 }
-.giftshop-redeem-success, .giftshop-redeem-error {
+.giftshop-redeem-success, .giftshop-redeem-error, .giftshop-redeem-loading {
   display: flex; align-items: center; gap: 8px;
   margin-top: 14px; padding: 10px 12px; font-size: 13.5px;
   border-radius: var(--radius-card);
+}
+.giftshop-redeem-loading { background: rgba(120, 120, 128, 0.10); color: var(--text-secondary); }
+.giftshop-redeem-loading .spinner { width: 18px; height: 18px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .giftshop-redeem-loading .spinner { animation: none; }
 }
 .giftshop-redeem-success { background: rgba(52, 199, 89, 0.14); color: var(--green); }
 .giftshop-redeem-error { background: rgba(255, 59, 48, 0.14); color: var(--red); }

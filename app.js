@@ -1928,6 +1928,9 @@ function wireGiftShopRedeemPanel(venueId) {
   const codeInput = document.getElementById('giftshop-code-input');
   const redeemBtn = document.getElementById('giftshop-redeem-btn');
   const resultEl = document.getElementById('giftshop-redeem-result');
+  resultEl.setAttribute('role', 'status');
+  resultEl.setAttribute('aria-live', 'polite');
+  let submitting = false;
 
   codeInput.addEventListener('input', () => {
     codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 5);
@@ -1938,14 +1941,18 @@ function wireGiftShopRedeemPanel(venueId) {
   codeInput.focus();
 
   const submit = async () => {
+    if (submitting) return;
     const code = codeInput.value.trim();
     if (code.length !== 5) {
       resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} Codes are 5 letters — check with the visitor and try again.</div>`;
       return;
     }
+    submitting = true;
     redeemBtn.disabled = true;
+    redeemBtn.textContent = 'Redeeming…';
+    redeemBtn.setAttribute('aria-busy', 'true');
     codeInput.disabled = true;
-    resultEl.innerHTML = '';
+    resultEl.innerHTML = '<div class="giftshop-redeem-loading"><span class="spinner" aria-hidden="true"></span><span>Processing redemption… Please wait for confirmation.</span></div>';
     try {
       const result = await Store.completeRedemption(venueId, code);
       resultEl.innerHTML = `
@@ -1959,6 +1966,9 @@ function wireGiftShopRedeemPanel(venueId) {
     } catch (err) {
       resultEl.innerHTML = `<div class="giftshop-redeem-error">${icon('triangleExclaim')} ${escapeHTML(redemptionErrorMessage(err))}</div>`;
     } finally {
+      submitting = false;
+      redeemBtn.textContent = 'Redeem';
+      redeemBtn.setAttribute('aria-busy', 'false');
       redeemBtn.disabled = false;
       codeInput.disabled = false;
       codeInput.focus();
