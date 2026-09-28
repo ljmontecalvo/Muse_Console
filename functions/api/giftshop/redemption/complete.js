@@ -10,7 +10,7 @@
 
 import { ckFetchRecord, ckModifyRecords, ckQuery, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { authorizeVenueOrAdmin } from '../../../_shared/auth.js';
-import { deductTrophies, getBalance } from '../../../_shared/trophyLedger.js';
+import { deductTrophies } from '../../../_shared/trophyLedger.js';
 import { checkRedemptionLimits, recordRedemptionForLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, windowIndexForTime } from '../../../_shared/redemptionCode.js';
 
@@ -75,7 +75,14 @@ export async function onRequestPost({ request, env }) {
   const itemId = itemRef && itemRef.recordName;
   const trophyCost = (redemption.fields.itemTrophyCostSnapshot && redemption.fields.itemTrophyCostSnapshot.value) || 0;
 
-  const currentBalance = await getBalance(creds, visitorId, venueId);
+  // These reads are independent. Keep the balance record/change tag for the
+  // debit so we do not immediately fetch the same record again.
+  const [balanceRecord, item, visitor] = await Promise.all([
+    ckFetchRecord({ ...creds, recordName: `balance_${visitorId}_${venueId}` }),
+    itemId ? ckFetchRecord({ ...creds, recordName: itemId }) : null,
+    visitorId ? ckFetchRecord({ ...creds, recordName: visitorId }).catch(() => null) : null,
+  ]);
+  const currentBalance = balanceRecord?.fields.balance?.value || 0;
   if (currentBalance < trophyCost) {
     return jsonResponse({ ok: false, error: 'insufficient_balance', balance: currentBalance, trophyCost }, 400);
   }
@@ -84,7 +91,6 @@ export async function onRequestPost({ request, env }) {
   // soft check with nothing reserved, so another visitor's redemption could have
   // consumed the last slot in the meantime.
   if (itemId) {
-    const item = await ckFetchRecord({ ...creds, recordName: itemId });
     if (item) {
       const limitCheck = await checkRedemptionLimits(creds, item, visitorId);
       if (!limitCheck.ok) {
@@ -97,12 +103,13 @@ export async function onRequestPost({ request, env }) {
     visitorId, venueId, amount: trophyCost,
     redemptionId: redemption.recordName,
     idempotencyKey: `redeem_${redemption.recordName}`,
+    balanceRecord,
   });
   if (!deductResult.ok) {
     return jsonResponse({ ok: false, error: deductResult.error || 'deduction_failed' }, 400);
   }
   if (itemId) {
-    await recordRedemptionForLimits(creds, itemId, visitorId);
+    await recordRedemptionForLimits(creds, itemId, visitorId, item);
   }
 
   const updateResp = await ckModifyRecords({
@@ -124,7 +131,6 @@ export async function onRequestPost({ request, env }) {
   const failed = (updateResp.records || []).find((r) => r.serverErrorCode);
   if (failed) return jsonResponse({ ok: false, error: 'save_failed', message: failed.reason || failed.serverErrorCode }, 500);
 
-  const visitor = visitorId ? await ckFetchRecord({ ...creds, recordName: visitorId }) : null;
   const visitorDisplayName = (visitor && visitor.fields.displayName && visitor.fields.displayName.value) || '';
 
   return jsonResponse({

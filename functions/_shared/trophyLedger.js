@@ -45,10 +45,13 @@ async function getOrCreateBalanceRecord(creds, visitorId, venueId) {
   throw new Error('Could not get or create trophy balance record');
 }
 
-async function adjustBalance(creds, visitorId, venueId, delta) {
+async function adjustBalance(creds, visitorId, venueId, delta, initialRecord = null) {
   const recordName = balanceRecordName(visitorId, venueId);
   for (let attempt = 0; attempt < MAX_BALANCE_RETRIES; attempt++) {
-    const rec = await getOrCreateBalanceRecord(creds, visitorId, venueId);
+    // The change tag still detects concurrent writes. A conflict always fetches
+    // a fresh record on the next attempt.
+    const rec = attempt === 0 && initialRecord?.recordName === recordName
+      ? initialRecord : await getOrCreateBalanceRecord(creds, visitorId, venueId);
     const current = (rec.fields.balance && rec.fields.balance.value) || 0;
     const next = current + delta;
     if (next < 0) return { ok: false, error: 'insufficient_balance', balance: current };
@@ -100,7 +103,7 @@ export async function awardTrophies(creds, { visitorId, venueId, amount, huntId,
 // idempotencyKey. If the balance turns out to be insufficient at deduction time (a
 // pre-flight check should already have happened at redemption/start), the ledger
 // entry is rolled back and { ok: false } is returned.
-export async function deductTrophies(creds, { visitorId, venueId, amount, redemptionId, idempotencyKey }) {
+export async function deductTrophies(creds, { visitorId, venueId, amount, redemptionId, idempotencyKey, balanceRecord = null }) {
   const recordName = `txn_${idempotencyKey}`;
   const created = await tryCreateLedgerEntry(creds, recordName, {
     visitorReference: { value: { recordName: visitorId, action: 'NONE' } },
@@ -112,7 +115,7 @@ export async function deductTrophies(creds, { visitorId, venueId, amount, redemp
   });
   if (!created) return { ok: true, alreadyProcessed: true };
 
-  const result = await adjustBalance(creds, visitorId, venueId, -Math.abs(amount));
+  const result = await adjustBalance(creds, visitorId, venueId, -Math.abs(amount), balanceRecord);
   if (!result.ok) {
     // The debit failed after the ledger entry was created (e.g. insufficient balance
     // discovered here) — remove the entry so the ledger doesn't record a deduction

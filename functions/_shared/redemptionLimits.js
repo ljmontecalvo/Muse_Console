@@ -27,9 +27,10 @@ export async function getVisitorItemRedemptionCount(creds, itemId, visitorId) {
   return (rec && rec.fields.count && rec.fields.count.value) || 0;
 }
 
-async function incrementTotalRedeemedCount(creds, itemId) {
+async function incrementTotalRedeemedCount(creds, itemId, initialItem = null) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const item = await ckFetchRecord({ ...creds, recordName: itemId });
+    const item = attempt === 0 && initialItem?.recordName === itemId
+      ? initialItem : await ckFetchRecord({ ...creds, recordName: itemId });
     if (!item) throw new Error('Item not found while incrementing redemption count');
     const current = (item.fields.totalRedeemedCount && item.fields.totalRedeemedCount.value) || 0;
     const resp = await ckModifyRecords({
@@ -102,7 +103,7 @@ export async function checkRedemptionLimits(creds, item, visitorId) {
   return { ok: true };
 }
 
-export async function recordRedemptionForLimits(creds, itemId, visitorId) {
-  await incrementTotalRedeemedCount(creds, itemId);
+export async function recordRedemptionForLimits(creds, itemId, visitorId, initialItem = null) {
+  await incrementTotalRedeemedCount(creds, itemId, initialItem);
   await incrementVisitorItemCount(creds, itemId, visitorId);
 }
