@@ -62,7 +62,7 @@ export async function verifyVisitorSessionToken(token, env) {
     return null;
   }
   if (!payload.visitorId) return null;
-  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+  if (!Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
   return payload.visitorId;
 }
 
@@ -71,5 +71,5 @@ export async function requireVisitorSession(request, env) {
   const authHeader = request.headers.get('Authorization') || '';
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) return null;
-  return verifyVisitorSessionToken(match[1], env);
+  try { return await verifyVisitorSessionToken(match[1], env); } catch { return null; }
 }

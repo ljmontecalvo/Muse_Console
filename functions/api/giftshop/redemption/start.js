@@ -4,9 +4,9 @@
 // Snapshots the item's name/kind/cost onto the Redemption record so a later catalog
 // edit can't retroactively change an in-flight commitment.
 
-import { ckFetchRecord, ckModifyRecords, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
+import { ckFetchRecord, getS2SCreds, jsonResponse } from '../../../_shared/cloudkit.js';
 import { requireVisitorSession } from '../../../_shared/visitorSession.js';
-import { getBalance } from '../../../_shared/trophyLedger.js';
+import { getBalance, commerceDB, nonnegativeInteger } from '../../../_shared/trophyLedger.js';
 import { checkRedemptionLimits } from '../../../_shared/redemptionLimits.js';
 import { deriveCode, generateCodeSecret, windowIndexForTime, WINDOW_SECONDS } from '../../../_shared/redemptionCode.js';
 
@@ -32,6 +32,7 @@ export async function onRequestPost({ request, env }) {
   if (!visitorId) return jsonResponse({ ok: false, error: 'unauthorized' }, 401);
 
   const creds = await getS2SCreds(env);
+  const db = commerceDB(env);
 
   const item = await ckFetchRecord({ ...creds, recordName: itemId });
   if (!item || (item.fields.isActive && item.fields.isActive.value) !== 1) {
@@ -46,15 +47,15 @@ export async function onRequestPost({ request, env }) {
     return jsonResponse({ ok: false, error: 'giftshop_disabled' }, 403);
   }
 
-  const trophyCost = (item.fields.trophyCost && item.fields.trophyCost.value) || 0;
-  const balance = await getBalance(creds, visitorId, venueId);
+  const trophyCost = nonnegativeInteger(item.fields.trophyCost?.value);
+  const balance = await getBalance(db, creds, visitorId, venueId);
   if (balance < trophyCost) {
     return jsonResponse({ ok: false, error: 'insufficient_balance', balance, trophyCost }, 400);
   }
 
   // Soft pre-flight check only — nothing is reserved yet, same reasoning as the
   // balance check above. Re-checked and actually recorded at complete-time.
-  const limitCheck = await checkRedemptionLimits(creds, item, visitorId);
+  const limitCheck = await checkRedemptionLimits(db, creds, item, visitorId);
   if (!limitCheck.ok) {
     return jsonResponse({ ok: false, error: limitCheck.error }, 400);
   }
@@ -74,36 +75,16 @@ export async function onRequestPost({ request, env }) {
     });
   }
 
-  const createResp = await ckModifyRecords({
-    ...creds,
-    operations: [{
-      operationType: 'create',
-      record: {
-        recordType: 'Redemption',
-        fields: {
-          visitorReference: { value: { recordName: visitorId, action: 'NONE' } },
-          venueReference: { value: { recordName: venueId, action: 'NONE' } },
-          itemReference: { value: { recordName: itemId, action: 'NONE' } },
-          itemNameSnapshot: { value: (item.fields.name && item.fields.name.value) || '' },
-          itemKindSnapshot: { value: (item.fields.kind && item.fields.kind.value) || 'item' },
-          itemTrophyCostSnapshot: { value: trophyCost },
-          status: { value: 'pending' },
-          codeSecret: { value: codeSecret },
-          expiresAt: { value: expiresAt },
-        },
-      },
-    }],
-  });
-  const savedRedemption = createResp.records && createResp.records[0];
-  if (!savedRedemption || savedRedemption.serverErrorCode) {
-    return jsonResponse({ ok: false, error: 'save_failed', message: (savedRedemption && savedRedemption.reason) || 'Could not start redemption' }, 500);
-  }
+  const redemptionId = crypto.randomUUID();
+  await db.prepare(`INSERT INTO redemptions(id,visitor_id,venue_id,item_id,item_name,item_kind,cost,code_secret,expires_at)
+    VALUES(?,?,?,?,?,?,?,?,?)`).bind(redemptionId, visitorId, venueId, itemId,
+      item.fields.name?.value || '', item.fields.kind?.value || 'item', trophyCost, codeSecret, expiresAt).run();
 
   return jsonResponse({
     ok: true,
-    redemptionId: savedRedemption.recordName,
+    redemptionId,
     expiresAt,
-    item: { name: item.fields.name && item.fields.name.value, kind: item.fields.kind && item.fields.kind.value, trophyCost },
+    item: { name: item.fields.name?.value || '', kind: item.fields.kind?.value || 'item', trophyCost },
     codes,
   });
 }

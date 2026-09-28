@@ -1,8 +1,4 @@
-// Verifies a Sign in with Apple `identityToken` (a JWT) server-side, independent of
-// CloudKit — this is what lets visitor-facing endpoints trust a real, unforgeable
-// identity instead of an unverified client-supplied string. Deliberately a higher bar
-// than functions/_shared/auth.js's documented callerUserRecordName trust model, since
-// visitor endpoints move real redeemable trophy value.
+// Verify Apple identity signatures and claims before issuing visitor sessions.
 
 function base64UrlToUint8Array(b64url) {
   const padded = b64url + '='.repeat((4 - (b64url.length % 4)) % 4);
@@ -70,8 +66,8 @@ export async function verifyAppleIdentityToken(identityToken, env) {
 
   const now = Math.floor(Date.now() / 1000);
   if (payload.iss !== 'https://appleid.apple.com') return null;
-  if (payload.exp && payload.exp < now) return null;
-  if (env.APPLE_SIGNIN_AUDIENCE && payload.aud !== env.APPLE_SIGNIN_AUDIENCE) return null;
+  if (!Number.isFinite(payload.exp) || payload.exp <= now) return null;
+  if (!env.APPLE_SIGNIN_AUDIENCE || payload.aud !== env.APPLE_SIGNIN_AUDIENCE) return null;
   if (!payload.sub) return null;
 
   return payload.sub;

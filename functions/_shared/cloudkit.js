@@ -75,8 +75,10 @@ export async function ckFetchRecord({ privateKey, keyId, base, recordName }) {
     path: `${base}/records/lookup`,
     body: { records: [{ recordName }] },
   });
-  const rec = json.records && json.records[0];
-  if (!rec || rec.serverErrorCode) return null;
+  if (json.serverErrorCode) throw new Error(`CloudKit lookup failed: ${json.serverErrorCode}`);
+  const rec = json.records?.[0];
+  if (rec?.serverErrorCode === 'NOT_FOUND') return null;
+  if (!rec || rec.serverErrorCode) throw new Error(`CloudKit lookup failed: ${rec?.serverErrorCode || 'missing record'}`);
   return rec;
 }
 
@@ -84,16 +86,20 @@ export async function ckQuery({ privateKey, keyId, base, recordType, filterBy, s
   const query = { recordType };
   if (filterBy) query.filterBy = filterBy;
   if (sortBy) query.sortBy = sortBy;
-  const json = await ckPost({ privateKey, keyId, path: `${base}/records/query`, body: { query } });
-  // A rejected query (e.g. a filter/sort field that isn't marked Queryable/Sortable in
-  // the schema) comes back with no `records` key at all, not an empty array — treating
-  // the two the same silently hides real failures as "no results". An empty but valid
-  // result set is still `records: []`, which is truthy, so this only fires on an actual
-  // CloudKit-reported error.
-  if (!json.records) {
-    throw new Error(`CloudKit query failed for ${recordType}: ${json.reason || json.serverErrorCode || 'unknown error'}`);
-  }
-  return json.records;
+  const records = [];
+  let continuationMarker;
+  const seen = new Set();
+  do {
+    const json = await ckPost({ privateKey, keyId, path: `${base}/records/query`, body: { query, ...(continuationMarker ? { continuationMarker } : {}) } });
+    if (!Array.isArray(json.records) || json.records.some(r => r.serverErrorCode)) {
+      throw new Error(`CloudKit query failed for ${recordType}: ${json.reason || json.serverErrorCode || 'record error'}`);
+    }
+    records.push(...json.records);
+    continuationMarker = json.continuationMarker;
+    if (continuationMarker && seen.has(continuationMarker)) throw new Error('Repeated CloudKit cursor');
+    seen.add(continuationMarker);
+  } while (continuationMarker);
+  return records;
 }
 
 // operations: [{ operationType: 'create'|'update'|'delete', record: {...} }]

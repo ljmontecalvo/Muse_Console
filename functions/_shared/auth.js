@@ -1,7 +1,5 @@
-// Authorization checks for the write endpoints. None of this verifies WHO is calling —
-// see the plan's "residual risk" note — it only checks whether the claimed
-// userRecordName is a manager of the relevant venue, or an admin, before a write
-// proceeds. `creds` is the {privateKey, keyId, base} shape from getS2SCreds(env).
+// Caller identities are supplied by api/_middleware.js after verifying a signed console session.
+// These helpers additionally enforce venue membership and administrator permissions.
 
 import { ckFetchRecord } from './cloudkit.js';
 

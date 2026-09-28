@@ -1,3 +1,5 @@
+// Current commerce/authentication deployment requirements: see DEPLOYMENT.md.
+// The schema notes below are historical; D1 now owns reward transactions and counts.
 // Serves config.js dynamically instead of as a static file. Cloudflare Pages Functions
 // take precedence over static assets at the same path, so this replaces the old
 // approach entirely on the deployed site — the CloudKit client API token now lives in

@@ -11,6 +11,7 @@ function recordToVenue(r) {
   return {
     id: r.recordName,
     recordChangeTag: r.recordChangeTag,
+    location: r.fields.location?.value || null,
     name: r.fields.name && r.fields.name.value,
     address: r.fields.address && r.fields.address.value,
     managers: (r.fields.managers && r.fields.managers.value) || [],
